@@ -1,3 +1,3 @@
 module github.com/Vertisphere/backend-service
 
-go 1.23.1
+go 1.22.2
