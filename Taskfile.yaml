@@ -1,0 +1,32 @@
+version: 3
+
+tasks:
+  local_build:
+    desc: "build local images"
+    cmds:
+      - GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -a -o build/backend cmd/backend/main.go
+
+  docker_run:
+    desc: "runs local docker instance"
+    cmds:
+      - task local_build
+      - docker compose build --no-cache backend
+      - docker compose up
+
+  docker_stop:
+    desc: "stops local docker instance"
+    cmds:
+      - docker compose down
+
+  docker-build:
+    desc: "builds Docker image from Dockerfile"
+    cmds:
+      - docker build
+
+  docker-build-slim:
+    desc: "builds Docker image, then builds slim image"
+    cmds:
+      - task docker build
+      - docker-slim build --http-probe my/backend
+      # - ...
+      # then enter

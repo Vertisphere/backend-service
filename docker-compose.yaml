@@ -1,0 +1,12 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: ./Dockerfile.local
+    image: backend:latest
+    command: ["./backend"]
+    environment:
+      - COLOR_LOGS_ENABLED=true
+      - ENV=local
+    # ports:
+    # - 8080:8080
