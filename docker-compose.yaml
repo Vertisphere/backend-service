@@ -8,5 +8,5 @@ services:
     environment:
       - COLOR_LOGS_ENABLED=true
       - ENV=local
-    # ports:
-    # - 8080:8080
+    ports:
+      - 6000:8080

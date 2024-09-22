@@ -21,7 +21,7 @@ tasks:
   docker-build:
     desc: "builds Docker image from Dockerfile"
     cmds:
-      - docker build
+      - docker build .
 
   docker-build-slim:
     desc: "builds Docker image, then builds slim image"
@@ -30,3 +30,18 @@ tasks:
       - docker-slim build --http-probe my/backend
       # - ...
       # then enter
+  docker-build-prod-latest:
+    desc: "builds slim prod docker image"
+    cmds:
+    - docker build --platform=linux/amd64 . -t gcr.io/backend-435201/backend:latest         
+    - docker push gcr.io/backend-435201/backend:latest 
+    # - docker tag gcr.io/backend-435201/backend:latest gcr.io/backend-435201/backend:latest
+      # - slim build --http-probe --continue-after --image-build-arch=linux/amd64 backend:v3
+      # - slim build --http-probe --continue-after backend:v3
+  get-cloud-run-creds:
+    desc: "get cloud run credentials for api cloud run service account"
+    cmds:
+    - gcloud iam service-accounts keys create service_account.json --iam-account=three-tier-app-run-sa@backend-435201.iam.gserviceaccount.com
+    #  - gcloud auth activate-service-account --key-file=service-account.json
+    # - docker build --platform=linux/amd64 . -t gcr.io/backend-435201/backend:latest         
+    # - docker push gcr.io/backend-435201/backend:latest 
