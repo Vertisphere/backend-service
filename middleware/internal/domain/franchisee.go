@@ -1,0 +1,2 @@
+// package me
+package domain

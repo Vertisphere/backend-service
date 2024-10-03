@@ -1,0 +1,36 @@
+# postgresql.cnf
+
+listen_addresses = '*'          # Listen on all interfaces
+port = 5432                     # Default PostgreSQL port
+data_directory = '/var/lib/postgresql/data'
+unix_socket_directories = '/var/run/postgresql'
+
+# Add any other custom configurations as need
+# data_directory = '/var/lib/postgresql/data'
+
+# unix_socket_directories = '/var/lib/pgsql_socket'
+
+listen_addresses = '*'
+
+# external_pid_file = '/var/run/postgresql/postgresql.pid'
+
+# Additional recommended settings for performance and security
+
+# Increase the shared_buffers setting for better performance
+shared_buffers = 256MB
+
+# Limit connections to improve performance
+max_connections = 100
+
+# Logging and verbosity settings
+log_destination = 'stderr'
+logging_collector = on
+log_directory = 'pg_log'
+log_filename = 'postgresql-%a.log'
+log_rotation_age = 1d
+log_rotation_size = 10MB
+
+# Security settings
+# ssl = on
+# ssl_cert_file = '/var/lib/postgresql/server.crt'
+# ssl_key_file = '/var/lib/postgresql/server.key'

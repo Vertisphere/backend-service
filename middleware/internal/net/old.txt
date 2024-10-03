@@ -1,0 +1,198 @@
+package net
+
+import (
+	"fmt"
+	"log"
+	"net/http"
+
+	"firebase.google.com/go/auth"
+	"github.com/Vertisphere/backend-service/internal/storage"
+)
+
+func handleSomething() http.HandlerFunc {
+	type request struct {
+		Name string
+	}
+	type response struct {
+		Greeting string `json:"greeting"`
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ok"))
+		return
+	}
+}
+
+// we don't need login becase we are using firebase auth
+//
+//	{
+//		uid: '123456789',
+//		email: 'user@example.com',
+//		emailVerified: true,
+//		password: 'password',
+//		multiFactor: {
+//		  enrolledFactors: [
+//			// When creating users with phone second factors, the uid and
+//			// enrollmentTime should not be specified. These will be provisioned by
+//			// the Auth server.
+//			// Primary second factor.
+//			{
+//			  phoneNumber: '+16505550001',
+//			  displayName: 'Corp phone',
+//			  factorId: 'phone',
+//			},
+//			// Backup second factor.
+//			{
+//			  phoneNumber: '+16505550002',
+//			  displayName: 'Personal phone',
+//			  factorId: 'phone'
+//			},
+//		  ],
+//		},
+//	  }
+
+func handleRegister(c *auth.Client) http.HandlerFunc {
+
+	// TODO: mfa
+	// type MultiFactor struct {
+	// 	EnrolledFactors []struct {
+	// 		PhoneNumber string `json:"phoneNumber"`
+	// 		DisplayName string `json:"displayName"`
+	// 		FactorId    string `json:"factorId"`
+	// 	} `json:"enrolledFactors"`
+	// }
+
+	// UID should not be specified if user is created with MFA
+	type request struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+		// MultiFactor   MultiFactor `json:"multiFactor"`
+	}
+
+	// using response type from auth.UserRecord
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		// remove client from context
+		// TODO, you should probably change how you pass in the client to the handler
+		params, err := decode[request](r)
+		if err != nil {
+			http.Error(w, "Bad Request", http.StatusBadRequest)
+			return
+		}
+		record, err := c.CreateUser(r.Context(), (&auth.UserToCreate{}).
+			Email(params.Email).
+			Password(params.Password),
+		)
+		if err != nil {
+			// could not create user error
+			// TODO add errors specific to email, password, etc
+			fmt.Println(err)
+			http.Error(w, "Could not create user", http.StatusInternalServerError)
+			return
+		}
+		encode[auth.UserRecord](w, r, http.StatusOK, *record)
+		return
+	}
+}
+
+func handleCustomToken(a *auth.Client, s *storage.SQLStorage) http.HandlerFunc {
+	type response struct {
+		Token string `json:"token"`
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		isFranchiser, isAdmin, err := s.ReadUser(r.Context().Value("token").(*auth.Token).UID)
+		if err != nil {
+			http.Error(w, "Could not read user", http.StatusInternalServerError)
+		}
+		claims := map[string]interface{}{
+			"isFranchiser": isFranchiser,
+			"isAdmin":      isAdmin,
+		}
+		uid := r.Context().Value("token").(*auth.Token).UID
+		token, err := a.CustomTokenWithClaims(r.Context(), uid, claims)
+		if err != nil {
+			log.Fatalf("error minting custom token: %v\n", err)
+		}
+		// instantiate response
+		resp := response{
+			Token: token,
+		}
+		// write token to response
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(resp.Token))
+	}
+}
+
+func handleVerifyEmail(c *auth.Client) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		params, err := decode[request](r)
+		if err != nil {
+			http.Error(w, "Bad Request", http.StatusBadRequest)
+			return
+		}
+		c.EmailVerificationLink()
+		err = c.SendEmailVerification(r.Context(), params.Email)
+		if err != nil {
+			http.Error(w, "Could not send email verification", http.StatusInternalServerError)
+			return
+		}
+	}
+}
+
+// Franchisers
+// func handleFranchiser(c *auth.Client) http.HandlerFunc {
+// 	return func(w http.ResponseWriter, r *http.Request) {
+
+// 		// get /franchiser/:id/ from url
+// 		id = r.URL.Path[len("/franchiser/"):]
+// 		// remove client from context
+// 		// TODO, you should probably change how you pass in the client to the handler
+// 		params, err := decode[request](r)
+// 		if err != nil {
+// 			http.Error(w, "Bad Request", http.StatusBadRequest)
+// 			return
+// 		}
+// 		record, err := c.CreateUser(r.Context(), (&auth.UserToCreate{}).
+// 			Email(params.Email).
+// 			Password(params.Password),
+// 		)
+// 		if err != nil {
+// 			// could not create user error
+// 			// TODO add errors specific to email, password, etc
+// 			fmt.Println(err)
+// 			http.Error(w, "Could not create user", http.StatusInternalServerError)
+// 			return
+// 		}
+// 		encode[auth.UserRecord](w, r, http.StatusOK, *record)
+// 		return
+// 	}
+// }
+
+// package main
+
+// import (
+// 	"fmt"
+// 	"github.com/twilio/twilio-go"
+// 	verify "github.com/twilio/twilio-go/rest/verify/v2"
+// )
+
+// func main() {
+// 	// Find your Account SID and Auth Token at twilio.com/console
+// 	// and set the environment variables. See http://twil.io/secure
+// 	client := twilio.NewRestClient()
+
+// 	params := &verify.CreateVerificationParams{}
+// 	params.SetTo("+15062329415")
+// 	params.SetChannel("sms")
+
+// 	resp, err := client.VerifyV2.CreateVerification("VA9e02d47638a2203ec9424237ae9f6433", params)
+// 	if err != nil {
+// 		fmt.Println(err.Error())
+// 	} else {
+// 		if resp.Sid != nil {
+// 			fmt.Println(*resp.Sid)
+// 		} else {
+// 			fmt.Println(resp.Sid)
+// 		}
+// 	}
+// }

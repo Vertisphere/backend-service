@@ -1,47 +1,79 @@
 version: 3
 
 tasks:
+  local_build_db:
+    desc: "build local postgres instance"
+    cmds:
+      - docker rm -f pgdb
+      - docker build -t pgdb ./database
+  local_build_api:
+    desc: "build local api instance"
+    cmds:
+      - cd middleware && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -a -o ./build/api ./cmd/api/main.go 
   local_build:
     desc: "build local images"
     cmds:
-      - GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -a -o build/backend cmd/backend/main.go
-
-  docker_run:
-    desc: "runs local docker instance"
+      - task local_build_db
+      - task local_build_api
+  local_run:
+    desc: "runs local docker instances"
     cmds:
       - task local_build
-      - docker compose build --no-cache backend
-      - docker compose up
+      - docker run -d --name pgdb -p 5432:5432 pgdb && docker run -d --name backend -p 8080:8080 backend
 
-  docker_stop:
-    desc: "stops local docker instance"
-    cmds:
-      - docker compose down
+  # docker_run:
+  #   desc: "runs local docker instance" cmds:
+  #     - task local_build
+  #     - docker compose build --no-cache backend
+  #     - docker compose up
 
-  docker-build:
-    desc: "builds Docker image from Dockerfile"
-    cmds:
-      - docker build .
+  # docker_stop:
+  #   desc: "stops local docker instance"
+  #   cmds:
+  #     - docker compose down
 
-  docker-build-slim:
-    desc: "builds Docker image, then builds slim image"
-    cmds:
-      - task docker build
-      - docker-slim build --http-probe my/backend
-      # - ...
-      # then enter
-  docker-build-prod-latest:
-    desc: "builds slim prod docker image"
-    cmds:
-    - docker build --platform=linux/amd64 . -t gcr.io/backend-435201/backend:latest         
-    - docker push gcr.io/backend-435201/backend:latest 
-    # - docker tag gcr.io/backend-435201/backend:latest gcr.io/backend-435201/backend:latest
-      # - slim build --http-probe --continue-after --image-build-arch=linux/amd64 backend:v3
-      # - slim build --http-probe --continue-after backend:v3
-  get-cloud-run-creds:
-    desc: "get cloud run credentials for api cloud run service account"
-    cmds:
-    - gcloud iam service-accounts keys create service_account.json --iam-account=three-tier-app-run-sa@backend-435201.iam.gserviceaccount.com
-    #  - gcloud auth activate-service-account --key-file=service-account.json
-    # - docker build --platform=linux/amd64 . -t gcr.io/backend-435201/backend:latest         
-    # - docker push gcr.io/backend-435201/backend:latest 
+  # docker-build:
+  #   desc: "builds Docker image from Dockerfile"
+  #   cmds:
+  #     - docker build .
+
+  # docker-build-slim:
+  #   desc: "builds Docker image, then builds slim image"
+  #   cmds:
+  #     - task docker build
+  #     - docker-slim build --http-probe my/backend
+  #     # - ...
+  #     # then enter
+  # docker-build-prod-latest:
+  #   desc: "builds slim prod docker image"
+  #   cmds:
+  #   - docker build --platform=linux/amd64 . -t gcr.io/backend-435201/backend:latest         
+  #   - docker push gcr.io/backend-435201/backend:latest 
+  #   # - docker tag gcr.io/backend-435201/backend:latest gcr.io/backend-435201/backend:latest
+  #     # - slim build --http-probe --continue-after --image-build-arch=linux/amd64 backend:v3
+  #     # - slim build --http-probe --continue-after backend:v3
+  # get-cloud-run-creds:
+  #   desc: "get cloud run credentials for api cloud run service account"
+  #   cmds:
+  #   - gcloud iam service-accounts keys create service_account.json --iam-account=three-tier-app-run-sa@backend-435201.iam.gserviceaccount.com
+  #   #  - gcloud auth activate-service-account --key-file=service-account.json
+  #   # - docker build --platform=linux/amd64 . -t gcr.io/backend-435201/backend:latest         
+  #   # - docker push gcr.io/backend-435201/backend:latest 
+  # build:
+  #   desc: "Build the Docker image"
+  #   cmds:
+  #     - docker rm -f pgdb
+  #     - docker build -t pgdb .
+
+  # run:
+  #   desc: "Run the Docker container"
+  #   cmds:
+  #     - "docker run --name pgdb -d -p 5432:5432 pgdb"
+
+  # build-and-run:
+  #   desc: "Build and run the Docker container"
+  #   cmds:
+  #     # make sure to remove the container before building a new one
+  #     - task rm
+  #     - task build
+  #     - task run
