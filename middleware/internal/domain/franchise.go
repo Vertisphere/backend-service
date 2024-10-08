@@ -17,6 +17,7 @@ type Franchise struct {
 	FranchiseName       string    `json:"franchise_name" db:"franchise_name"`
 	HeadquartersAddress string    `json:"headquarters_address" db:"headquarters_address"`
 	PhoneNumber         string    `json:"phone_number" db:"phone_number"`
+	AdminAccountID      string    `json:"admin_account_id,omitempty" db:"admin_account_id"`
 	CreatedAt           time.Time `json:"created_at,omitempty" db:"created_at"`
 	UpdatedAt           time.Time `json:"updated_at,omitempty" db:"updated_at"`
 }

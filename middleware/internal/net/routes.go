@@ -17,10 +17,20 @@ func addRoutes(
 	// Assuming that the following routes are prefixed with /api
 	mux.Handle("/", http.NotFoundHandler())
 	// Get Custom Token
-	// mux.Handle('/customToken', handleCustomToken(auth))
+	mux.Handle("GET /customToken", handleCustomToken(auth, storage))
 
-	// Create Franchise with franchiser user
+	// Create Franchise with franchiser user (nvm we're not doing that)
 	mux.Handle("POST /franchise", handlePostFranchise(auth, storage))
+
+	// Create user (Right now only supports creating franchiser)
+	mux.Handle("POST /user", handlePostUser(auth, storage))
+
+	mux.Handle("POST /franchisee", handlePostFranchisee(auth, storage))
+
+	// See all orders for franchise
+	// mux.Handle("GET /order", handlePost)
+
+	// mux.Handle("GET ")
 
 	// Create user and add to franchise
 

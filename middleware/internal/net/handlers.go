@@ -25,12 +25,18 @@ func handlePostFranchise(a *auth.Client, s *storage.SQLStorage) http.HandlerFunc
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
+		accountIDStr, ok := account_id.(string)
+		if !ok {
+			http.Error(w, "Invalid account ID", http.StatusBadRequest)
+			return
+		}
+
 		req, err := decode[request](r)
 		if err != nil {
 			http.Error(w, "Invalid request payload", http.StatusBadRequest)
 			return
 		}
-		franchise_id, err := s.CreateFranchise(req.Franchise)
+		err = s.CreateFranchise(accountIDStr, req.Franchise)
 		if err != nil {
 			// log error
 			log.Println(err)
@@ -40,37 +46,167 @@ func handlePostFranchise(a *auth.Client, s *storage.SQLStorage) http.HandlerFunc
 		// create franchiser user
 		// user_id, err := s.CreateFranchiseUser()
 		// write to reponse with response struct
-		response := response{id: fmt.Sprintf("%d", franchise_id), success: true}
+		response := response{success: true}
 		encode(w, r, 200, response)
 	}
 }
 
-// func handleCustomToken(c *auth.Client, s *storage.SQLStorage) http.HandlerFunc {
-// 	return func(w http.ResponseWriter, r *http.Request) {
-// 		ctx := r.Context()
-// 		bearer := strings.Split(r.Header.Get("Authorization"), "Bearer ")[1]
-// 		// Should already be verified, but just in case
-// 		token, err := c.VerifyIDToken(ctx, bearer)
-// 		if err != nil {
-// 			// Token is invalid
-// 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-// 			return
-// 		}
-// 		// Get User's Role from DB
-// 		id, role, err := s.ReadUserForCustomToken(token.UID)
-// 		if err != nil || role == nil {
-// 			http.Error(w, "Could not get user role", http.StatusInternalServerError)
-// 			return
-// 		}
+func handlePostUser(a *auth.Client, s *storage.SQLStorage) http.HandlerFunc {
+	// -- 0 for franchisee_non_admin, 1 for franchisee_admin,
+	// 2 for franchiser_non_admin, 3 for franchiser_admin
+	type request struct {
+		Name string `json:"name"`
+		Role int    `json:"role"`
+	}
+	type response struct {
+		Success bool `json:"success"`
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		account_id := r.Context().Value("account_id")
+		if account_id == nil {
+			// encode(w, r, 401, response{success: false, id: })
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		accountIDStr, ok := account_id.(string)
+		if !ok {
+			http.Error(w, "Invalid account ID", http.StatusBadRequest)
+			return
+		}
+		req, err := decode[request](r)
+		if err != nil {
+			http.Error(w, "Invalid request payload", http.StatusBadRequest)
+			return
+		}
+		if req.Role == 0 || req.Role == 1 {
+			// a.EmailSignInLink(r.Context(), req.Name)
+			// s.CreateFranchiseeUser(req.Name, req.Role)
+		} else if req.Role == 2 || req.Role == 3 {
+			franchiseID, err := s.GetFranchiseIDFromAccountId(accountIDStr)
+			if err != nil {
+				http.Error(w, "User not designated as franchiser", http.StatusInternalServerError)
+				return
+			}
+			err = s.CreateFranchiseUser(accountIDStr, franchiseID, req.Name)
+			if err != nil {
+				http.Error(w, "Could not create user, likely already exists", http.StatusInternalServerError)
+				return
+			}
+		} else {
+			http.Error(w, "Invalid role", http.StatusBadRequest)
+			return
+		}
+		response := response{Success: true}
+		encode(w, r, 200, response)
+	}
+}
 
-// 		c.CustomTokenWithClaims(ctx, token.UID, map[string]interface{}{
-// 			"id":   id,
-// 			"role": role,
-// 		})
-// 		// send custom token back
-// 		w.Write([]byte(fmt.Sprintf(`{"token": "%s"}`, token)))
-// 	}
-// }
+func handleCustomToken(a *auth.Client, s *storage.SQLStorage) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		account_id := r.Context().Value("account_id")
+		if account_id == nil {
+			// encode(w, r, 401, response{success: false, id: })
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		accountIDStr, ok := account_id.(string)
+		if !ok {
+			http.Error(w, "Invalid account ID", http.StatusBadRequest)
+			return
+		}
+		// Get User's Role from DB
+		app_id, franchise_id, role, err := s.GetUserClaims(accountIDStr)
+		if err != nil {
+			log.Println(err)
+			http.Error(w, "Could not get user role", http.StatusInternalServerError)
+			return
+		}
+
+		token, err := a.CustomTokenWithClaims(r.Context(), accountIDStr, map[string]interface{}{
+			"app_id":       app_id,
+			"franchise_id": franchise_id,
+			"role":         role,
+		})
+		if err != nil {
+			http.Error(w, "Could not create custom token", http.StatusInternalServerError)
+			return
+		}
+		// send custom token back
+		w.Write([]byte(fmt.Sprintf(`{"token": "%s"}`, token)))
+	}
+}
+
+func handlePostFranchisee(a *auth.Client, s *storage.SQLStorage) http.HandlerFunc {
+	type request struct {
+		FranchiseeName   string `json:"franchisee_name"`
+		HeadquartersName string `json:"headquarters_address"`
+		Email            string `json:"email"`
+		Phone            string `json:"phone"`
+	}
+	type response struct {
+		Link    string `json:"link"`
+		Success bool   `json:"success"`
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		franchiseIDValue := r.Context().Value("franchise_id")
+		franchiseIDFloat, ok := franchiseIDValue.(float64)
+		if !ok {
+			http.Error(w, "Invalid franchise ID", http.StatusBadRequest)
+			return
+		}
+		// Add error handling for float to int conversion
+		franchise_id := int(franchiseIDFloat)
+		log.Println(franchise_id)
+		if franchise_id != 3 {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		req, err := decode[request](r)
+		if err != nil {
+			http.Error(w, "Invalid request payload", http.StatusBadRequest)
+			return
+		}
+		// Create Anon User in Firebase and get UID
+		// Create Franchisee in DB and add UID
+		// create app_user in DB and link to franchise, franchisee, and firbase uid
+		u := auth.UserToCreate{}
+		u.Email(req.Email)
+		uid, err := a.CreateUser(r.Context(), &u)
+		if err != nil {
+			http.Error(w, "Could not create user", http.StatusInternalServerError)
+			return
+		}
+		// TODO: use env variable for URL
+		emailSetting := auth.ActionCodeSettings{
+			URL: "https://backend-435201.firebaseapp.com",
+		}
+		a.GetUser(r.Context(), uid.UID)
+		link, err := a.PasswordResetLinkWithSettings(r.Context(), req.Email, &emailSetting)
+
+		// TODO: send email with link.
+		// Right now admin sdk only let's you create oob link instead of actually sending the email.
+		// And the shitty thing is that google cloud run doesn't let you send emails
+		// So unless we figure out another hosting, we'll just have to use external email service for now.
+
+		if err != nil {
+			http.Error(w, "Could not create email link", http.StatusInternalServerError)
+			return
+		}
+
+		franchisee_id, err := s.CreateFranchisee(franchise_id, req.FranchiseeName, req.HeadquartersName, req.Phone)
+		if err != nil {
+			http.Error(w, "Could not create franchisee", http.StatusInternalServerError)
+			return
+		}
+		err = s.CreateFranchiseeUser(uid.UID, franchise_id, franchisee_id, req.FranchiseeName+" Admin")
+		if err != nil {
+			http.Error(w, "Could not create franchisee", http.StatusInternalServerError)
+			return
+		}
+		response := response{Success: true, Link: link}
+		encode(w, r, 200, response)
+	}
+}
 
 // func createFranchise(s *storage.SQLStorage) http.HandlerFunc {
 // 	type response struct {

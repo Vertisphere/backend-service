@@ -31,12 +31,64 @@ func (s *SQLStorage) Close() error {
 	return s.db.Close()
 }
 
-func (s SQLStorage) CreateFranchise(franchise domain.Franchise) error {
+func (s SQLStorage) CreateFranchise(admin_account_id string, franchise domain.Franchise) error {
 	// deconstruct franchise object  and insert into franchise table
 	// Construct query string
+	// TODO: Right now the flow is shit af
+	// Basically, I'm not sure how we want to do the business logic on this
+	// Like do we want an account to be able to create multiple franchises???
+	// Anyways, the current apporach to make sure that an admin user can be created securely
+	// If a post /user comes in to create a user, it will create the franchise id,
+	// then we query the franchise entry, check the admin_account_id, and verify that the account_ID in the entry matches the one in the JWT.
+	// I know its shit but I can't think of something better rn
+
 	query := fmt.Sprintf(
-		"INSERT INTO franchise(franchise_name, headquarters_address, phone_number) VALUES('%s', '%s', '%s')",
-		franchise.FranchiseName, franchise.HeadquartersAddress, franchise.PhoneNumber,
+		"INSERT INTO franchise(franchise_name, headquarters_address, phone_number, admin_account_id) VALUES('%s', '%s', '%s', '%s')",
+		franchise.FranchiseName, franchise.HeadquartersAddress, franchise.PhoneNumber, admin_account_id,
+	)
+
+	log.Println("Executing query:", query)
+
+	_, err := s.db.Exec(query)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (s SQLStorage) GetFranchiseIDFromAccountId(accountID string) (int, error) {
+	var franchiseID int
+	query := "SELECT franchise_id FROM franchise WHERE admin_account_id = $1"
+	err := s.db.QueryRow(query, accountID).Scan(&franchiseID)
+	if err != nil {
+		return 0, err
+	}
+	return franchiseID, nil
+}
+
+func (s SQLStorage) CreateFranchiseUser(accountID string, franchiseID int, name string) error {
+	// Setting all to role = 3 for now
+	query := fmt.Sprintf(
+		"INSERT INTO app_user(account_id, franchise_id, role, name) VALUES ('%s', '%d', '%d', '%s')",
+		accountID, franchiseID, 3, name,
+	)
+	log.Println("Executing query:", query)
+
+	_, err := s.db.Exec(query)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (s SQLStorage) CreateFranchiseeUser(accountId string, franchiseId int, franchiseeId int, name string) error {
+	// Setting all to role = 1 for now
+	// Create Franchisee in Database
+	query := fmt.Sprintf(
+		"INSERT INTO app_user(account_id, franchise_id, franchisee_id, role, name) VALUES ('%s', '%d', '%d', '%d', '%s')",
+		accountId, franchiseId, franchiseeId, 1, name,
 	)
 	log.Println("Executing query:", query)
 
@@ -45,6 +97,34 @@ func (s SQLStorage) CreateFranchise(franchise domain.Franchise) error {
 		return err
 	}
 	return nil
+}
+
+func (s SQLStorage) GetUserClaims(accountID string) (int, int, int, error) {
+	var userID int
+	var franchise_id int
+	var role int
+	query := "SELECT user_id, franchise_id, role FROM app_user WHERE account_id = $1"
+	err := s.db.QueryRow(query, accountID).Scan(&userID, &franchise_id, &role)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	return userID, franchise_id, role, nil
+}
+
+func (s SQLStorage) CreateFranchisee(franchiseId int, franchiseeName string, headquartersAddress string, phone string) (int, error) {
+	// Create Franchisee in Database
+	// and return the franchisee_id
+	var franchise_id int
+	query := fmt.Sprintf(
+		"INSERT INTO franchisee(franchise_id, franchisee_name, headquarters_address, phone_number) VALUES ('%d', '%s', '%s', '%s') RETURNING franchisee_id",
+		franchiseId, franchiseeName, headquartersAddress, phone,
+	)
+	log.Println("Executing query:", query)
+	err := s.db.QueryRow(query).Scan(&franchise_id)
+	if err != nil {
+		return 0, err
+	}
+	return franchise_id, nil
 }
 
 // func (s SQLStorage) ReadUser(id string) (bool, bool, error) {

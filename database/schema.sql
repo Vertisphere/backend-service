@@ -3,9 +3,11 @@ CREATE TABLE franchise (
     franchise_name VARCHAR(100) NOT NULL,
     headquarters_address VARCHAR(255),
     phone_number VARCHAR(20),
+    admin_account_id VARCHAR(50),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+CREATE INDEX admin_account_id_index ON franchise USING HASH (admin_account_id);
 
 CREATE TABLE franchisee (
     franchisee_id SERIAL PRIMARY KEY,
@@ -24,13 +26,12 @@ CREATE TABLE app_user (
     franchisee_id INT REFERENCES franchisee(franchisee_id) NULL, -- Nullable for franchiser users
     -- 0 for franchisee_non_admin, 1 for franchisee_admin, 2 for franchiser_non_admin, 3 for franchiser_admin
     role INT NOT NULL,
-    first_name VARCHAR(50) NOT NULL,
-    last_name VARCHAR(50) NOT NULL,
+    name VARCHAR(50) NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CHECK (role IN (0, 1, 2, 3))
 );
-CREATE INDEX accound_id_index ON app_user USING HASH (account_id);
+CREATE INDEX account_id_index ON app_user USING HASH (account_id);
 
 CREATE TABLE product (
     product_id SERIAL PRIMARY KEY,
