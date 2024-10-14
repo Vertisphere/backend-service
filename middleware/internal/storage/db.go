@@ -127,6 +127,101 @@ func (s SQLStorage) CreateFranchisee(franchiseId int, franchiseeName string, hea
 	return franchise_id, nil
 }
 
+func (s SQLStorage) CreateProduct(franchiseId int, name string, description string, price float64) (int, error) {
+	// Create Product in Database and get the product_id
+	var product_id int
+	query := fmt.Sprintf(
+		"INSERT INTO product(franchise_id, product_name, description, price, product_status) VALUES ('%d', '%s', '%s', '%f', '%d') RETURNING product_id",
+		franchiseId, name, description, price, 0,
+	)
+	log.Println("Executing query:", query)
+
+	err := s.db.QueryRow(query).Scan(&product_id)
+	if err != nil {
+		return 0, err
+	}
+	return product_id, nil
+}
+
+func (s SQLStorage) ListProducts(franchiseId int, pageSize int, pageToken string, orderBy string) ([]domain.Product, string, error) {
+	var nextToken string
+	var products []domain.Product
+	var rows *sql.Rows
+	var err error
+
+	// query with pagination
+	if pageToken == "" {
+		dbQuery := fmt.Sprintf("SELECT * FROM product WHERE franchise_id = $1 ORDER BY %s LIMIT $2", orderBy)
+		rows, err = s.db.Query(dbQuery,
+			franchiseId, pageSize)
+	} else {
+		dbQuery := fmt.Sprintf("SELECT * FROM product WHERE franchise_id = $1 AND product_id > $2 ORDER BY %s LIMIT $3", orderBy)
+		rows, err = s.db.Query(dbQuery,
+			franchiseId, pageToken, pageSize)
+	}
+
+	if err != nil {
+		return nil, "", err
+	}
+
+	for rows.Next() {
+		var product domain.Product
+		err = rows.Scan(&product.ID, &product.FranchiseID, &product.ProductName, &product.Description, &product.Price, &product.ProductStatus, &product.CreatedAt, &product.UpdatedAt)
+		if err != nil {
+			return nil, "", err
+		}
+		products = append(products, product)
+	}
+
+	if len(products) != 0 {
+		nextToken = fmt.Sprintf("%d", products[len(products)-1].ID)
+	} else {
+		nextToken = pageToken
+	}
+
+	return products, nextToken, nil
+}
+
+func (s SQLStorage) SearchProducts(franchiseId int, query string, pageSize int, pageToken string, orderBy string) ([]domain.Product, string, error) {
+	// For now we use ILIKE but in the future implement tsvector
+	var nextToken string
+	var products []domain.Product
+	var rows *sql.Rows
+	var err error
+	// mutate query to add percentage signs
+	query = "%" + query + "%"
+	if pageToken == "" {
+		dbQuery := fmt.Sprintf("SELECT * FROM product WHERE franchise_id = $1 AND (product_name ILIKE $2 OR description ILIKE $2) ORDER BY %s LIMIT $3", orderBy)
+		rows, err = s.db.Query(dbQuery,
+			franchiseId, query, pageSize)
+	} else {
+		dbQuery := fmt.Sprintf("SELECT * FROM product WHERE franchise_id = $1 AND (product_name ILIKE $2 OR description ILIKE $2) AND product_id > $3 ORDER BY %s LIMIT $4", orderBy)
+		rows, err = s.db.Query(dbQuery,
+			franchiseId, query, pageToken, pageSize)
+	}
+
+	if err != nil {
+		return nil, "", err
+	}
+
+	for rows.Next() {
+		var product domain.Product
+		err = rows.Scan(&product.ID, &product.FranchiseID, &product.ProductName, &product.Description, &product.Price, &product.ProductStatus, &product.CreatedAt, &product.UpdatedAt)
+		if err != nil {
+			return nil, "", err
+		}
+		products = append(products, product)
+	}
+
+	if len(products) != 0 {
+		nextToken = fmt.Sprintf("%d", products[len(products)-1].ID)
+	} else {
+		nextToken = pageToken
+	}
+
+	return products, nextToken, nil
+}
+
 // func (s SQLStorage) ReadUser(id string) (bool, bool, error) {
 // 	//get is_franchiser and is_admin from users table where id = id
 // 	results, err := s.db.Query("SELECT is_franchiser, is_admin FROM users WHERE id =?", id)

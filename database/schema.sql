@@ -39,6 +39,7 @@ CREATE TABLE product (
     product_name VARCHAR(100) NOT NULL,
     description TEXT,
     price DECIMAL(10, 2) NOT NULL,
+    product_status INT DEFAULT 0, -- 0 for active, 1 for inactive
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

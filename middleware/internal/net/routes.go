@@ -25,12 +25,53 @@ func addRoutes(
 	// Create user (Right now only supports creating franchiser)
 	mux.Handle("POST /user", handlePostUser(auth, storage))
 
+	// Create franchisee and sent password reset email
 	mux.Handle("POST /franchisee", handlePostFranchisee(auth, storage))
+
+	// Create Product (Only for franchiser)
+	mux.Handle("POST /product", handlePostProduct(storage))
+
+	// Search for products
+	// List Products
+	// mux.Handle("GET /product", handleListProduct(storage))
+
+	// Get product
+	// mux.Handle("GET /product/:id", handleGetProduct(storage))
+
+	// Going to follow google REST API guidelines
+	// resource: product
+	// method: list
+	// patterns: pagination
+	// Should I make a separate list and search or just make search do everything?
+	// For now just make search do everything
+
+	// resource: product
+	// method: search
+	// patterns: pagination, result ordering
+	// fields:
+	// 	sorting order:
+	// - order_by (https://cloud.google.com/apis/design/design_patterns#sorting_order)
+	// What is generally going to be ordered by?
+	// price? Created date? ...
+	// 	pagination (https://cloud.google.com/apis/design/design_patterns#list_pagination)
+	// PS: Pagination with FTS isn't really efficient since you need to get the whole search result and index it
+	// To get a page everytime you switch pages.
+	// For now we bite the bullet because we expect people wont be going through pages given a search.
+	// - page_token
+	// - page_size
+	// - next_page_token
+	// Search:
+	// If query is "" then treat call like a list request
+	// query:
+	// Search for products
+	mux.Handle("GET /product:search", handleSearchProduct(storage))
+
+	// mux.Handle("GET /product/:id", handleGetProductInfo(storage))
+	// Create Order
+	// mux.Handle("POST /order", handlePostOrder(storage))
 
 	// See all orders for franchise
 	// mux.Handle("GET /order", handlePost)
-
-	// mux.Handle("GET ")
 
 	// Create user and add to franchise
 

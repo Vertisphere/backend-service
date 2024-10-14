@@ -1,15 +1,20 @@
 package net
 
 import (
+	"encoding/base64"
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"firebase.google.com/go/auth"
 	"github.com/Vertisphere/backend-service/internal/domain"
 	"github.com/Vertisphere/backend-service/internal/storage"
 )
 
+// Create a type for all the values I put into the context from the middleware
+// Create a method that retrieves the values from the context, error handles, and returns the value in correct format
 func handlePostFranchise(a *auth.Client, s *storage.SQLStorage) http.HandlerFunc {
 	type request struct {
 		Franchise domain.Franchise `json:"franchise"`
@@ -148,17 +153,24 @@ func handlePostFranchisee(a *auth.Client, s *storage.SQLStorage) http.HandlerFun
 		Success bool   `json:"success"`
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
+		roleIDValue := r.Context().Value("role")
+		roleIDFloat, ok := roleIDValue.(float64)
+		if !ok {
+			http.Error(w, "Cannot get role ID from JWT", http.StatusBadRequest)
+			return
+		}
+		role := int(roleIDFloat)
+
 		franchiseIDValue := r.Context().Value("franchise_id")
 		franchiseIDFloat, ok := franchiseIDValue.(float64)
 		if !ok {
-			http.Error(w, "Invalid franchise ID", http.StatusBadRequest)
+			http.Error(w, "Cannot get franchise ID from JWT", http.StatusBadRequest)
 			return
 		}
-		// Add error handling for float to int conversion
 		franchise_id := int(franchiseIDFloat)
-		log.Println(franchise_id)
-		if franchise_id != 3 {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+
+		if role != 3 && role != 2 {
+			http.Error(w, "Requires Franchiser Role", http.StatusUnauthorized)
 			return
 		}
 		req, err := decode[request](r)
@@ -180,7 +192,7 @@ func handlePostFranchisee(a *auth.Client, s *storage.SQLStorage) http.HandlerFun
 		emailSetting := auth.ActionCodeSettings{
 			URL: "https://backend-435201.firebaseapp.com",
 		}
-		a.GetUser(r.Context(), uid.UID)
+		// a.GetUser(r.Context(), uid.UID)
 		link, err := a.PasswordResetLinkWithSettings(r.Context(), req.Email, &emailSetting)
 
 		// TODO: send email with link.
@@ -195,16 +207,165 @@ func handlePostFranchisee(a *auth.Client, s *storage.SQLStorage) http.HandlerFun
 
 		franchisee_id, err := s.CreateFranchisee(franchise_id, req.FranchiseeName, req.HeadquartersName, req.Phone)
 		if err != nil {
+			// Delete anon user created if db creation fails
+			a.DeleteUser(r.Context(), uid.UID)
 			http.Error(w, "Could not create franchisee", http.StatusInternalServerError)
 			return
 		}
 		err = s.CreateFranchiseeUser(uid.UID, franchise_id, franchisee_id, req.FranchiseeName+" Admin")
 		if err != nil {
+			// Delete anon user created if db creation fails
+			a.DeleteUser(r.Context(), uid.UID)
 			http.Error(w, "Could not create franchisee", http.StatusInternalServerError)
 			return
 		}
 		response := response{Success: true, Link: link}
 		encode(w, r, 200, response)
+	}
+}
+
+func handlePostProduct(s *storage.SQLStorage) http.HandlerFunc {
+	// TODO add price santization
+	type request struct {
+		ProductName string  `json:"product_name"`
+		Description string  `json:"description"`
+		Price       float64 `json:"price"`
+		// ProductStatus is active by default = 0
+		// ProductStatus string  `json:"product_status"`
+	}
+	type response struct {
+		ProductID int  `json:"product_id"`
+		Success   bool `json:"success"`
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		roleIDValue := r.Context().Value("role")
+		roleIDFloat, ok := roleIDValue.(float64)
+		if !ok {
+			http.Error(w, "Cannot get role ID from JWT", http.StatusBadRequest)
+			return
+		}
+		role := int(roleIDFloat)
+
+		franchiseIDValue := r.Context().Value("franchise_id")
+		franchiseIDFloat, ok := franchiseIDValue.(float64)
+		if !ok {
+			http.Error(w, "Cannot get franchise ID from JWT", http.StatusBadRequest)
+			return
+		}
+		franchise_id := int(franchiseIDFloat)
+
+		if role != 3 && role != 2 {
+			http.Error(w, "Requires Franchiser Role", http.StatusUnauthorized)
+			return
+		}
+		req, err := decode[request](r)
+		if err != nil {
+			http.Error(w, "Invalid request payload", http.StatusBadRequest)
+			return
+		}
+
+		product_id, err := s.CreateProduct(franchise_id, req.ProductName, req.Description, req.Price)
+		if err != nil {
+			log.Println(err)
+			http.Error(w, "Could not create product", http.StatusInternalServerError)
+			return
+		}
+		response := response{Success: true, ProductID: product_id}
+		encode(w, r, 200, response)
+	}
+}
+
+// handleSearchProduct handles the search and listing of products with pagination and sorting.
+func handleSearchProduct(s *storage.SQLStorage) http.HandlerFunc {
+	allowedSortFields := map[string]bool{
+		"price":      true,
+		"created_at": true,
+		"updated_at": true,
+	}
+	allowedSortOrders := map[string]bool{
+		"asc":  true,
+		"desc": true,
+	}
+	type response struct {
+		Products      []domain.Product `json:"products"`
+		NextPageToken string           `json:"next_page_token,omitempty"`
+	}
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		// TODO right now pagination is based off product_id >,
+		// So you will have to get to a null page to figure out that you're at the end.
+		// Is there a better way?
+		franchiseIdParam := r.Context().Value("franchise_id")
+		franchiseIdFloat, ok := franchiseIdParam.(float64)
+		franchiseId := int(franchiseIdFloat)
+		if !ok {
+			http.Error(w, "Invalid franchise ID", http.StatusBadRequest)
+			return
+		}
+
+		var orderBy string
+		orderByParam := r.URL.Query().Get("order_by")
+		if orderByParam == "" {
+			orderBy = "created_at desc"
+		} else {
+			orderByFields := strings.Split(orderByParam, ",")
+			for _, field := range orderByFields {
+				parts := strings.Split(field, " ")
+				if len(parts) != 2 {
+					http.Error(w, "Invalid parameter: order_by", http.StatusBadRequest)
+					return
+				}
+				if !allowedSortFields[parts[0]] || !allowedSortOrders[parts[1]] {
+					http.Error(w, "Invalid parameter: order_by", http.StatusBadRequest)
+					return
+				}
+			}
+			orderBy = strings.Join(orderByFields, ", ")
+		}
+
+		query := r.URL.Query().Get("query")
+
+		// For now page token doesn't contain continuity information so we just base 64 encode the id
+		// In the future we can add more informoartion like query and order_by
+		pageTokenParam := r.URL.Query().Get("page_token")
+		pageTokenByte, err := base64.StdEncoding.DecodeString(pageTokenParam)
+		if err != nil {
+			http.Error(w, "Invalid parameter: page_token", http.StatusBadRequest)
+			return
+		}
+		pageToken := string(pageTokenByte)
+
+		pageSizeParam := r.URL.Query().Get("page_size")
+		pageSize, err := strconv.Atoi(pageSizeParam)
+		if err != nil || pageSize <= 0 {
+			http.Error(w, "Invalid parameter: page_size", http.StatusBadRequest)
+			return
+		}
+
+		var products []domain.Product
+		var nextTokenId string
+		// log.Println(fmt.Sprintf("%d %s %d %s %s", franchiseId, query, pageSize, pageToken, orderBy))
+		if query == "" {
+			// log.Println("List Products")
+			products, nextTokenId, err = s.ListProducts(franchiseId, pageSize, pageToken, orderBy)
+			// log.Println(err)
+		} else {
+			products, nextTokenId, err = s.SearchProducts(franchiseId, query, pageSize, pageToken, orderBy)
+			// log.Println(err)
+		}
+		// base64 encode the order_by field and nextTokenId into a single string
+		nextToken := base64.StdEncoding.EncodeToString([]byte(nextTokenId))
+
+		if err != nil {
+			http.Error(w, "Could not get products", http.StatusInternalServerError)
+			return
+		}
+		// Prepare and send the response
+		resp := response{
+			Products:      products,
+			NextPageToken: nextToken,
+		}
+		encode(w, r, http.StatusOK, resp)
 	}
 }
 
