@@ -23,7 +23,7 @@ CREATE TABLE app_user (
     user_id SERIAL PRIMARY KEY,
     account_id VARCHAR UNIQUE NOT NULL,
     franchise_id INT REFERENCES franchise(franchise_id), -- Nullable if the user is not tied to a specific franchise
-    franchisee_id INT REFERENCES franchisee(franchisee_id) NULL, -- Nullable for franchiser users
+    franchisee_id INT REFERENCES franchisee(franchisee_id) NULL, -- nullable for franchisers
     -- 0 for franchisee_non_admin, 1 for franchisee_admin, 2 for franchiser_non_admin, 3 for franchiser_admin
     role INT NOT NULL,
     name VARCHAR(50) NOT NULL,
@@ -56,25 +56,25 @@ CREATE TABLE invoice (
     CHECK (status IN ('pending', 'paid'))
 );
 
-CREATE TABLE "order" (
+CREATE TABLE orders (
     order_id SERIAL PRIMARY KEY,
     franchise_id INT REFERENCES franchise(franchise_id),
     franchisee_id INT REFERENCES franchisee(franchisee_id), -- Franchisee placing the order
     created_by INT REFERENCES app_user(user_id), -- User who placed the order
     invoice_id INT REFERENCES invoice(invoice_id) NULL, -- Nullable, linked once invoiced
     status VARCHAR(20) DEFAULT 'ordered', -- Status: ordered, preparing, ready, picked up, invoiced
-    total_amount DECIMAL(15, 2) DEFAULT 0 NOT NULL, -- Total cost of all items in the order
+    total DECIMAL(15, 2) DEFAULT 0 NOT NULL, -- Total cost of all items in the order
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    preparing_at TIMESTAMP, -- Timestamp when status changed to 'preparing'
-    ready_at TIMESTAMP, -- Timestamp when status changed to 'ready'
-    picked_up_at TIMESTAMP, -- Timestamp when status changed to 'picked up'
-    invoiced_at TIMESTAMP, -- Timestamp when status changed to 'invoiced'
+    preparing_at TIMESTAMP NULL, -- Timestamp when status changed to 'preparing'
+    ready_at TIMESTAMP NULL, -- Timestamp when status changed to 'ready'
+    picked_up_at TIMESTAMP NULL, -- Timestamp when status changed to 'picked up'
+    invoiced_at TIMESTAMP NULL, -- Timestamp when status changed to 'invoiced'
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CHECK (status IN ('ordered', 'preparing', 'ready', 'picked up', 'invoiced'))
 );
 CREATE TABLE order_product (
     order_product_id SERIAL PRIMARY KEY,
-    order_id INT REFERENCES "order"(order_id) ON DELETE CASCADE,
+    order_id INT REFERENCES orders(order_id) ON DELETE CASCADE,
     product_id INT REFERENCES product(product_id) ON DELETE CASCADE,
     quantity INT NOT NULL, -- Quantity of the product in the order
     price DECIMAL(10, 2) NOT NULL, -- Price per item at the time of order (can differ from base product price)

@@ -120,7 +120,7 @@ func handleCustomToken(a *auth.Client, s *storage.SQLStorage) http.HandlerFunc {
 			return
 		}
 		// Get User's Role from DB
-		app_id, franchise_id, role, err := s.GetUserClaims(accountIDStr)
+		app_user_id, franchise_id, franchisee_id, role, err := s.GetUserClaims(accountIDStr)
 		if err != nil {
 			log.Println(err)
 			http.Error(w, "Could not get user role", http.StatusInternalServerError)
@@ -128,9 +128,10 @@ func handleCustomToken(a *auth.Client, s *storage.SQLStorage) http.HandlerFunc {
 		}
 
 		token, err := a.CustomTokenWithClaims(r.Context(), accountIDStr, map[string]interface{}{
-			"app_id":       app_id,
-			"franchise_id": franchise_id,
-			"role":         role,
+			"app_user_id":   app_user_id,
+			"franchise_id":  franchise_id,
+			"franchisee_id": franchisee_id,
+			"role":          role,
 		})
 		if err != nil {
 			http.Error(w, "Could not create custom token", http.StatusInternalServerError)
@@ -304,11 +305,12 @@ func handleSearchProduct(s *storage.SQLStorage) http.HandlerFunc {
 		}
 
 		var orderBy string
+		var orderByFields []string
 		orderByParam := r.URL.Query().Get("order_by")
 		if orderByParam == "" {
 			orderBy = "created_at desc"
 		} else {
-			orderByFields := strings.Split(orderByParam, ",")
+			orderByFields = strings.Split(orderByParam, ",")
 			for _, field := range orderByFields {
 				parts := strings.Split(field, " ")
 				if len(parts) != 2 {
@@ -334,6 +336,17 @@ func handleSearchProduct(s *storage.SQLStorage) http.HandlerFunc {
 			return
 		}
 		pageToken := string(pageTokenByte)
+
+		// TODO: FIX THIS PAGINATION
+		// pageToken := string(pageTokenByte)
+		// pageTokenMap := make(map[string]int)
+		// err = json.Unmarshal(pageTokenByte, &pageTokenMap)
+		// if err != nil {
+		// 	http.Error(w, "Invalid parameter: page_token", http.StatusBadRequest)
+		// 	return
+		// }
+		// Get list of keys of pageTokenMap
+		// pageTokenKeys := pageTokenMap["keys"]
 
 		pageSizeParam := r.URL.Query().Get("page_size")
 		pageSize, err := strconv.Atoi(pageSizeParam)
@@ -366,6 +379,75 @@ func handleSearchProduct(s *storage.SQLStorage) http.HandlerFunc {
 			NextPageToken: nextToken,
 		}
 		encode(w, r, http.StatusOK, resp)
+	}
+}
+
+func handleCreateOrder(s *storage.SQLStorage) http.HandlerFunc {
+	// Using domain.OrderRequest instead of request struct
+	// type request struct {
+	// 	Products []struct {
+	// 		ProductID int `json:"product_id"`
+	// 		Quantity  int `json:"quantity"`
+	// 	} `json:"products"`
+	// }
+	type response struct {
+		OrderID int  `json:"order_id"`
+		Success bool `json:"success"`
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		roleIDValue := r.Context().Value("role")
+		roleIDFloat, ok := roleIDValue.(float64)
+		if !ok {
+			http.Error(w, "Cannot get role ID from JWT", http.StatusBadRequest)
+			return
+		}
+		role := int(roleIDFloat)
+
+		franchiseIDValue := r.Context().Value("franchise_id")
+		franchiseIDFloat, ok := franchiseIDValue.(float64)
+		if !ok {
+			http.Error(w, "Cannot get franchise ID from JWT", http.StatusBadRequest)
+			return
+		}
+		franchise_id := int(franchiseIDFloat)
+
+		franchiseeIDValue := r.Context().Value("franchisee_id")
+		franchiseeIDFloat, ok := franchiseeIDValue.(float64)
+		if !ok {
+			http.Error(w, "Cannot get franchisee ID from JWT", http.StatusBadRequest)
+			return
+		}
+		franchisee_id := int(franchiseeIDFloat)
+
+		appUserIDValue := r.Context().Value("app_user_id")
+		appUserIDFloat, ok := appUserIDValue.(float64)
+		if !ok {
+			http.Error(w, "Cannot get app user ID from JWT", http.StatusBadRequest)
+			return
+		}
+		app_user_id := int(appUserIDFloat)
+
+		//  Creator of order should be franchisee
+		if role == 3 || role == 2 {
+			http.Error(w, "Requires Franchisee Role", http.StatusUnauthorized)
+			return
+		}
+
+		order, err := decode[domain.OrderRequest](r)
+		if err != nil {
+			http.Error(w, "Invalid request payload", http.StatusBadRequest)
+			return
+		}
+
+		var order_id int
+		order_id, err = s.CreateOrder(app_user_id, franchise_id, franchisee_id, order.Products)
+		if err != nil {
+			log.Println(err)
+			http.Error(w, "Could not create order", http.StatusInternalServerError)
+			return
+		}
+		response := response{Success: true, OrderID: order_id}
+		encode(w, r, 200, response)
 	}
 }
 

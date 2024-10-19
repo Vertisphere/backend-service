@@ -66,9 +66,16 @@ func addRoutes(
 	// Search for products
 	mux.Handle("GET /product:search", handleSearchProduct(storage))
 
+	// Since the serach + list returns description we can store desciption client side for all serach results
+	// Although this is isn't that hard to implement
 	// mux.Handle("GET /product/:id", handleGetProductInfo(storage))
+
+	// resource: order
+	// method: create
+	// patterns:
+	// fields:
 	// Create Order
-	// mux.Handle("POST /order", handlePostOrder(storage))
+	mux.Handle("POST /order", handleCreateOrder(storage))
 
 	// See all orders for franchise
 	// mux.Handle("GET /order", handlePost)

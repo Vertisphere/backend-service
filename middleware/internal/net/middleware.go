@@ -35,10 +35,11 @@ func verifyToken(c *auth.Client, h http.Handler) http.Handler {
 			http.Error(w, "Not Custom Token", http.StatusUnauthorized)
 		}
 		// call handler with token Claims info (app_id, franchise_id, role)
-		ctx = context.WithValue(ctx, "app_id", token.Claims["app_id"])
+		ctx = context.WithValue(ctx, "app_user_id", token.Claims["app_user_id"])
 		ctx = context.WithValue(ctx, "franchise_id", token.Claims["franchise_id"])
+		ctx = context.WithValue(ctx, "franchisee_id", token.Claims["franchisee_id"])
 		ctx = context.WithValue(ctx, "role", token.Claims["role"])
-		log.Println(token.Claims["franchise_id"])
+		// log.Println(token.Claims["franchise_id"])
 		r = r.WithContext(ctx)
 		h.ServeHTTP(w, r)
 	})

@@ -99,16 +99,21 @@ func (s SQLStorage) CreateFranchiseeUser(accountId string, franchiseId int, fran
 	return nil
 }
 
-func (s SQLStorage) GetUserClaims(accountID string) (int, int, int, error) {
+func (s SQLStorage) GetUserClaims(accountID string) (int, int, int, int, error) {
 	var userID int
 	var franchise_id int
+	var franchisee_id sql.NullInt32
 	var role int
-	query := "SELECT user_id, franchise_id, role FROM app_user WHERE account_id = $1"
-	err := s.db.QueryRow(query, accountID).Scan(&userID, &franchise_id, &role)
+	query := "SELECT user_id, franchise_id, franchisee_id, role FROM app_user WHERE account_id = $1"
+	err := s.db.QueryRow(query, accountID).Scan(&userID, &franchise_id, &franchisee_id, &role)
 	if err != nil {
-		return 0, 0, 0, err
+		return 0, 0, 0, 0, err
 	}
-	return userID, franchise_id, role, nil
+	if !franchisee_id.Valid {
+		return userID, franchise_id, 0, role, nil
+	} else {
+		return userID, franchise_id, int(franchisee_id.Int32), role, nil
+	}
 }
 
 func (s SQLStorage) CreateFranchisee(franchiseId int, franchiseeName string, headquartersAddress string, phone string) (int, error) {
@@ -220,6 +225,59 @@ func (s SQLStorage) SearchProducts(franchiseId int, query string, pageSize int, 
 	}
 
 	return products, nextToken, nil
+}
+
+// TODO: fix type signature somehow
+// Probably add struct for Order and OrderRequest in the domain file?
+func (s SQLStorage) CreateOrder(appUserId int, franchiseId int, franchiseeId int, products domain.Products) (int, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+
+	defer func() {
+		if err != nil {
+			tx.Rollback()
+		} else {
+			tx.Commit()
+		}
+	}()
+
+	var total float64
+	var order_id int
+	total = 0.00
+
+	// Create Order in Database and get the order_id
+	err = tx.QueryRow("INSERT INTO orders(franchise_id, franchisee_id, created_by) VALUES ($1, $2, $3) RETURNING order_id", franchiseId, franchiseeId, appUserId).Scan(&order_id)
+	if err != nil {
+		return 0, err
+	}
+
+	// Create Order Product in join table
+	for _, product := range products {
+		// Get price of product
+		var price float64
+		err = tx.QueryRow("SELECT price FROM product WHERE product_id = $1", product.ProductID).Scan(&price)
+		if err != nil {
+			return 0, err
+		}
+
+		// Insert into order_product table
+		_, err = tx.Exec("INSERT INTO order_product(order_id, product_id, quantity, price) VALUES ($1, $2, $3, $4)", order_id, product.ProductID, product.Quantity, price)
+		if err != nil {
+			return 0, err
+		}
+
+		// Add to total
+		total += price * float64(product.Quantity)
+	}
+
+	// Insert total into order table
+	_, err = tx.Exec("UPDATE orders SET total = $1 WHERE order_id = $2", total, order_id)
+	if err != nil {
+		return 0, err
+	}
+	return order_id, nil
 }
 
 // func (s SQLStorage) ReadUser(id string) (bool, bool, error) {
