@@ -49,7 +49,7 @@ CREATE TABLE invoice (
     franchise_id INT REFERENCES franchise(franchise_id), -- Franchise for which the invoice is created
     franchisee_id INT REFERENCES franchisee(franchisee_id), -- Invoice belongs to a franchisee
     created_by INT REFERENCES app_user(user_id), -- User who created the invoice
-    total_amount DECIMAL(15, 2) NOT NULL,
+    total DECIMAL(15, 2) NOT NULL,
     status VARCHAR(20) DEFAULT 'pending', -- 'pending' or 'paid'
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
