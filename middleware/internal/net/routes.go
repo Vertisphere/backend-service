@@ -13,6 +13,7 @@ func addRoutes(
 	mux *http.ServeMux,
 	auth *auth.Client,
 	storage *storage.SQLStorage,
+	qbClientKeys []string,
 ) {
 	// Assuming that the following routes are prefixed with /api
 	mux.Handle("/", http.NotFoundHandler())
@@ -20,8 +21,9 @@ func addRoutes(
 	mux.Handle("GET /customToken", handleCustomToken(auth, storage))
 
 	// Create Franchise with franchiser user (nvm we're not doing that)
-	mux.Handle("POST /franchise", handlePostFranchise(auth, storage))
+	mux.Handle("POST /franchise", handlePostFranchise(storage))
 
+	mux.Handle("POST /linkQuickbooks", handleLinkQuickbooks(storage, qbClientKeys))
 	// Create user (Right now only supports creating franchiser)
 	mux.Handle("POST /user", handlePostUser(auth, storage))
 
@@ -76,6 +78,14 @@ func addRoutes(
 	// fields:
 	// Create Order
 	mux.Handle("POST /order", handleCreateOrder(storage))
+
+	// Franchisee updates order if still in ordered status
+	// mux.Handle("PATCH /order", handleUpdateOrder(storage))
+
+	// Franchiser updates order to preparing status
+	// TODO: figure out a smarter way to pass data between middleware -> handler beyond just context
+	// We're giving handler quickbooks client through the context like wtf?
+	// mux.Handle("PUT /order:approve", isQuickbooks(storage, qbClientKeys, handleApproveOrder(storage)))
 
 	// See all orders for franchise
 	// mux.Handle("GET /order", handlePost)
