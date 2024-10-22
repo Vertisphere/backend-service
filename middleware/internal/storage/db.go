@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/Vertisphere/backend-service/internal/domain"
 	_ "github.com/lib/pq"
@@ -278,6 +279,52 @@ func (s SQLStorage) CreateOrder(appUserId int, franchiseId int, franchiseeId int
 		return 0, err
 	}
 	return order_id, nil
+}
+
+func (s SQLStorage) GetQuickbooksAuth(franchiseID int) (string, string, string, bool, error) {
+	var realmId, authTokenValue, jwtTokenValue sql.NullString
+	var expTime sql.NullTime
+	query := "SELECT quickbooks_id, quickbooks_auth_token, quickbooks_refresh_token, quickbooks_refresh_token_expires FROM franchise WHERE franchise_id = $1"
+	err := s.db.QueryRow(query, franchiseID).Scan(&realmId, &authTokenValue, &jwtTokenValue, &expTime)
+	if err != nil {
+		return "", "", "", false, err
+	}
+
+	var authToken, jwtToken string
+	var exp time.Time
+	if authTokenValue.Valid {
+		authToken = authTokenValue.String
+	}
+	if jwtTokenValue.Valid {
+		jwtToken = jwtTokenValue.String
+	}
+	if expTime.Valid {
+		exp = expTime.Time
+	}
+
+	var isExpired bool
+	if !expTime.Valid || exp.Before(time.Now()) {
+		isExpired = true
+	}
+
+	return realmId.String, authToken, jwtToken, isExpired, nil
+}
+
+func (s SQLStorage) SetQuickbooksRefresh(franchiseId int, refreshToken string) error {
+	refreshTokenExpires := time.Now().Add(time.Hour)
+	_, err := s.db.Exec("UPDATE franchise SET quickbooks_refresh_token = $1, quickbooks_refresh_token_expires = $2 WHERE franchise_id = $3", refreshToken, refreshTokenExpires, franchiseId)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s SQLStorage) SetQuickbooksAuth(franchiseId int, realmId string, authToken string, jwtToken string) error {
+	_, err := s.db.Exec("UPDATE franchise SET quickbooks_id = $1, quickbooks_auth_token = $2, quickbooks_refresh_token = $3, quickbooks_refresh_token_expires = $4 WHERE franchise_id = $5", realmId, authToken, jwtToken, time.Now().Add(time.Hour), franchiseId)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 // func (s SQLStorage) ReadUser(id string) (bool, bool, error) {

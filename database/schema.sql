@@ -4,6 +4,10 @@ CREATE TABLE franchise (
     headquarters_address VARCHAR(255),
     phone_number VARCHAR(20),
     admin_account_id VARCHAR(50),
+    quickbooks_id VARCHAR(50) NULL, -- Quickbooks ID for accounting integration
+    quickbooks_auth_token VARCHAR NULL, -- Quickbooks access token for API integration
+    quickbooks_refresh_token VARCHAR NULL, -- Quickbooks refresh token for API integration
+    quickbooks_refresh_token_expires TIMESTAMP NULL, -- Expiry time for the refresh token
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

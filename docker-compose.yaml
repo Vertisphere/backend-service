@@ -22,6 +22,9 @@ services:
       - DB_USER=main_user
       - DB_PASS=main_pass
       - DB_NAME=main
+      - QUICKBOOKS_CLIENT_ID=ABRZXEqL4DpCxHz4OhdiuKg0BXaKIYf4QfVgqLdzC3SngxVNWy
+      - QUICKBOOKS_CLIENT_SECRET=I4hPumIZtLlRbvoks9f6Ovzn63sLOdomDBiY5X6S
+      - QUICKBOOKS_IS_PRODUCTION=false
     ports:
       - 8080:8080
 

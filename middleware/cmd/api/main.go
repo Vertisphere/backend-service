@@ -42,11 +42,16 @@ func main() {
 		}
 	}
 	defer store.Close()
+	// Client for quickbooks API
+	// TODO: pass clientID and secret in a better way?
+	log.Println("Quickbooks client keys: ", c.Quickbooks.ClientID, c.Quickbooks.ClientSecret, c.Quickbooks.IsProduction)
+	qbClientKeys := []string{c.Quickbooks.ClientID, c.Quickbooks.ClientSecret, fmt.Sprintf("%t", c.Quickbooks.IsProduction)}
 
 	srv := mynet.NewServer(
 		ctx,
 		auth,
 		&store,
+		qbClientKeys,
 	)
 
 	httpServer := &http.Server{
