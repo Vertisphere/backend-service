@@ -22,6 +22,11 @@ services:
       - DB_USER=main_user
       - DB_PASS=main_pass
       - DB_NAME=main
+      - FIREBASE_API_KEY=AIzaSyB4aC40Zw1oUwRgGxqf8EGp2l2XQow-dpU
+      - QUICKBOOKS_CLIENT_ID=Q0
+      - QUICKBOOKS_CLIENT_SECRET=Q1
+      - QUICKBOOKS_REDIRECT_URI=http://localhost:8080/api/v1/auth/quickbooks/callback
+      - QUICKBOOKS_IS_PRODUCTION=false
     ports:
       - 8080:8080
 

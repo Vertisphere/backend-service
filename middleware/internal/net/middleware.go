@@ -11,6 +11,11 @@ import (
 
 func verifyToken(c *auth.Client, h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/register" && r.Method == "POST" {
+			h.ServeHTTP(w, r)
+			return
+		}
+
 		ctx := r.Context()
 		authHeader := strings.Split(r.Header.Get("Authorization"), "Bearer ")
 		if len(authHeader) != 2 {

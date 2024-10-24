@@ -13,10 +13,23 @@ type DB struct {
 	Name     string `envconfig:"DB_NAME"`
 }
 
+type Firebase struct {
+	APIKey string `envconfig:"FIREBASE_API_KEY"`
+}
+
+type Quickbooks struct {
+	ClientID     string `envconfig:"QUICKBOOKS_CLIENT_ID"`
+	ClientSecret string `envconfig:"QUICKBOOKS_CLIENT_SECRET"`
+	RedirectURI  string `envconfig:"QUICKBOOKS_REDIRECT_URI"`
+	IsProduction bool   `envconfig:"QUICKBOOKS_IS_PRODUCTION"`
+}
+
 // Config holds start up config information
 type Config struct {
 	GCP
 	DB
+	Firebase
+	Quickbooks
 	Env      string `envconfig:"ENV"`
 	Port     string `envconfig:"PORT"`
 	LogDebug bool   `envconfig:"LOG_DEBUG" default:"false"`

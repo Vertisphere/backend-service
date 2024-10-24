@@ -11,6 +11,8 @@ import (
 
 	firebase "firebase.google.com/go"
 
+	fb "github.com/Vertisphere/backend-service/external/firebase"
+	qb "github.com/Vertisphere/backend-service/external/quickbooks"
 	"github.com/Vertisphere/backend-service/internal/config"
 	mynet "github.com/Vertisphere/backend-service/internal/net"
 	"github.com/Vertisphere/backend-service/internal/storage"
@@ -43,10 +45,18 @@ func main() {
 	}
 	defer store.Close()
 
+	// firebase client
+	firebaseClient := fb.NewClient(c.Firebase.APIKey)
+
+	// quickbooksClient
+	quickbooksClient := qb.NewClient(c.Quickbooks.ClientID, c.Quickbooks.ClientSecret, c.Quickbooks.RedirectURI, c.Quickbooks.IsProduction)
+
 	srv := mynet.NewServer(
 		ctx,
 		auth,
 		&store,
+		firebaseClient,
+		quickbooksClient,
 	)
 
 	httpServer := &http.Server{
