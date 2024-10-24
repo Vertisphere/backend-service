@@ -10,12 +10,13 @@ import (
 
 	"firebase.google.com/go/auth"
 	"github.com/Vertisphere/backend-service/internal/domain"
+	"github.com/Vertisphere/backend-service/internal/quickbooks"
 	"github.com/Vertisphere/backend-service/internal/storage"
 )
 
 // Create a type for all the values I put into the context from the middleware
 // Create a method that retrieves the values from the context, error handles, and returns the value in correct format
-func handlePostFranchise(a *auth.Client, s *storage.SQLStorage) http.HandlerFunc {
+func handlePostFranchise(s *storage.SQLStorage) http.HandlerFunc {
 	type request struct {
 		Franchise domain.Franchise `json:"franchise"`
 	}
@@ -51,6 +52,72 @@ func handlePostFranchise(a *auth.Client, s *storage.SQLStorage) http.HandlerFunc
 		// create franchiser user
 		// user_id, err := s.CreateFranchiseUser()
 		// write to reponse with response struct
+		response := response{success: true}
+		encode(w, r, 200, response)
+	}
+}
+
+func handleLinkQuickbooks(s *storage.SQLStorage, qbClientKeys []string) http.HandlerFunc {
+	type request struct {
+		AuthCode string `json:"auth_code"`
+		RealmID  string `json:"realm_id"`
+	}
+	type response struct {
+		success bool `json:"success"`
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		// log.Println(qbClientKeys)
+		franchiseIDValue := r.Context().Value("franchise_id")
+		franchiseIDFloat, ok := franchiseIDValue.(float64)
+		if !ok {
+			http.Error(w, "Cannot get franchise ID from JWT", http.StatusBadRequest)
+			return
+		}
+		franchiseId := int(franchiseIDFloat)
+		req, err := decode[request](r)
+		if err != nil {
+			http.Error(w, "Invalid request payload", http.StatusBadRequest)
+			return
+		}
+
+		clientId := qbClientKeys[0]
+		clientSecret := qbClientKeys[1]
+		clientIsProd := qbClientKeys[2]
+		if clientId == "" || clientSecret == "" || clientIsProd == "" {
+			http.Error(w, "Quickbooks api client secrets not available", http.StatusInternalServerError)
+			return
+		}
+		// Convert string to bool
+		clientIsProdBool, err := strconv.ParseBool(clientIsProd)
+		if err != nil {
+			http.Error(w, "Invalid value for clientIsProd", http.StatusInternalServerError)
+			return
+		}
+		qbClient, err := quickbooks.NewClient(qbClientKeys[0], qbClientKeys[1], req.RealmID, clientIsProdBool, "", nil)
+		if err != nil {
+			http.Error(w, "Couldn't initialize quickbooks client", http.StatusInternalServerError)
+			return
+		}
+		if qbClient == nil {
+			http.Error(w, "Could not initialize quickbooks client", http.StatusInternalServerError)
+			return
+		}
+		log.Println("Client initialized")
+		// So basically how auth code works is that you call the oauth endpoint with the redirect uri, and you get the auth code
+		// Then the auth code is associated with a redirect_uri. So whenever you get a jwt token you'll need to specify the redirect to be the same.
+		redirectURI := "https://developer.intuit.com/v2/OAuth2Playground/RedirectUrl"
+		// TODO set expiry based on bearerResponse.ExpiresIn (right now it's hard coded to an hour)
+		bearerResponse, err := qbClient.RetrieveBearerToken(req.AuthCode, redirectURI)
+		if err != nil {
+			http.Error(w, "Could not retrieve bearer token", http.StatusInternalServerError)
+			return
+		}
+		log.Println(bearerResponse)
+		err = s.SetQuickbooksAuth(franchiseId, req.RealmID, req.AuthCode, bearerResponse.AccessToken)
+		if err != nil {
+			http.Error(w, "Could not link Quickbooks to Franchise", http.StatusInternalServerError)
+			return
+		}
 		response := response{success: true}
 		encode(w, r, 200, response)
 	}
@@ -450,6 +517,52 @@ func handleCreateOrder(s *storage.SQLStorage) http.HandlerFunc {
 		encode(w, r, 200, response)
 	}
 }
+
+// func handleApproveOrder(s *storage.SQLStorage) http.HandlerFunc {
+// 	type request struct {
+// 		OrderID int `json:"order_id"`
+// 	}
+// 	type response struct {
+// 		Success bool `json:"success"`
+// 	}
+// 	return func(w http.ResponseWriter, r *http.Request) {
+// 		roleIDValue := r.Context().Value("role")
+// 		roleIDFloat, ok := roleIDValue.(float64)
+// 		if !ok {
+// 			http.Error(w, "Cannot get role ID from JWT", http.StatusBadRequest)
+// 			return
+// 		}
+// 		role := int(roleIDFloat)
+
+// 		franchiseIDValue := r.Context().Value("franchise_id")
+// 		franchiseIDFloat, ok := franchiseIDValue.(float64)
+// 		if !ok {
+// 			http.Error(w, "Cannot get franchise ID from JWT", http.StatusBadRequest)
+// 			return
+// 		}
+// 		franchise_id := int(franchiseIDFloat)
+
+// 		if role != 3 && role != 2 {
+// 			http.Error(w, "Requires Franchiser Role", http.StatusUnauthorized)
+// 			return
+// 		}
+
+// 		req, err := decode[request](r)
+// 		if err != nil {
+// 			http.Error(w, "Invalid request payload", http.StatusBadRequest)
+// 			return
+// 		}
+
+// 		// err = s.ApproveOrder(franchise_id, req.OrderID)
+// 		if err != nil {
+// 			log.Println(err)
+// 			http.Error(w, "Could not approve order", http.StatusInternalServerError)
+// 			return
+// 		}
+// 		response := response{Success: true}
+// 		encode(w, r, 200, response)
+// 	}
+// }
 
 // func createFranchise(s *storage.SQLStorage) http.HandlerFunc {
 // 	type response struct {

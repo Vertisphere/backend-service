@@ -12,6 +12,7 @@ func NewServer(
 	ctx context.Context,
 	auth *auth.Client,
 	store *storage.SQLStorage,
+	qbClientKeys []string,
 
 ) http.Handler {
 	mux := http.NewServeMux()
@@ -20,6 +21,7 @@ func NewServer(
 		mux,
 		auth,
 		store,
+		qbClientKeys,
 	)
 	var handler http.Handler = mux
 	handler = verifyToken(auth, handler)
