@@ -20,10 +20,15 @@ func addRoutes(
 
 ) {
 	// Assuming that the following routes are prefixed with /api
-	mux.Handle("/", http.NotFoundHandler())
+	// FOR DEV ONLY
+	// mux.Handle("/", http.NotFoundHandler())
 
 	// We're creating a firebase user for franchiser not franchisee
 	mux.Handle("POST /qbLogin", LoginQuickbooks(fbc, qbc, auth, storage))
+
+	mux.Handle("GET /customers", ListCustomers(qbc))
+
+	mux.Handle("/", ShowClaims())
 	// mux.Handle("POST /register", CreateUser(fbc))
 
 	// mux.Handle("POST /company", CreateCompany(fbc, qbc, storage))

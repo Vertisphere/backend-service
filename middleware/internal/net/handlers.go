@@ -10,6 +10,7 @@ import (
 	fb "github.com/Vertisphere/backend-service/external/firebase"
 	qb "github.com/Vertisphere/backend-service/external/quickbooks"
 	"github.com/Vertisphere/backend-service/internal/config"
+	"github.com/Vertisphere/backend-service/internal/domain"
 	"github.com/Vertisphere/backend-service/internal/storage"
 	"gopkg.in/square/go-jose.v2"
 )
@@ -44,6 +45,13 @@ import (
 // 	}
 // }
 
+func ShowClaims() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := r.Context().Value("claims").(domain.Claims)
+		log.Println(claims)
+	}
+}
+
 func LoginQuickbooks(fbc *fb.Client, qbc *qb.Client, a *auth.Client, s *storage.SQLStorage) http.HandlerFunc {
 	type request struct {
 		AuthCode        string `json:"auth_code"`
@@ -75,6 +83,7 @@ func LoginQuickbooks(fbc *fb.Client, qbc *qb.Client, a *auth.Client, s *storage.
 				http.Error(w, "No cached token", http.StatusBadRequest)
 				return
 			}
+			log.Println(dbCompany.QBBearerTokenExpiry)
 			isTokenExpired := dbCompany.QBBearerTokenExpiry.Before(time.Now())
 			if isTokenExpired {
 				bearerToken, err = qbc.RefreshToken(dbCompany.QBRefreshToken)
@@ -152,15 +161,15 @@ func LoginQuickbooks(fbc *fb.Client, qbc *qb.Client, a *auth.Client, s *storage.
 			http.Error(w, "Could not serialize token", http.StatusInternalServerError)
 			return
 		}
-
-		customTokenInternal, err := a.CustomTokenWithClaims(r.Context(), firebaseID, map[string]interface{}{
-			"qb_company_id":   req.RealmID,
-			"qb_bearer_token": encryptedToken,
-			"is_franchiser":   true,
-			"firebase_id":     firebaseID,
+		customClaims := domain.Claims{
+			QBCompanyID:   req.RealmID,
+			QBBearerToken: encryptedToken,
+			IsFranchiser:  true,
+			FirebaseID:    firebaseID,
 			// For future
-			// is_admin
-		})
+			// IsAdmin
+		}
+		customTokenInternal, err := a.CustomTokenWithClaims(r.Context(), firebaseID, domain.ClaimsToMap(customClaims))
 		signInWithCustomTokenResp, err := fbc.SignInWithCustomToken(customTokenInternal)
 
 		// FOR PURELY DEBUGGING PURPOSES
@@ -178,6 +187,53 @@ func LoginQuickbooks(fbc *fb.Client, qbc *qb.Client, a *auth.Client, s *storage.
 			Token:   signInWithCustomTokenResp.IdToken,
 			Success: true}
 		encode(w, r, 200, response)
+	}
+}
+
+func ListCustomers(qbc *qb.Client) http.HandlerFunc {
+	// type request struct {
+	// 	OrderBy   string `json:"order_by"`
+	// 	PageSize  string `json:"page_size"`
+	// 	PageToken string `json:"page_token"`
+	// 	Query     string `json:"query"`
+	// }
+	type response struct {
+		Customers []qb.Customer `json:"customers"`
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		// get claims from context
+		claims := r.Context().Value("claims").(domain.Claims)
+		token, err := decryptJWE(claims.QBBearerToken)
+		if err != nil {
+			http.Error(w, "Could not decrypt QB token", http.StatusUnauthorized)
+			return
+		}
+		qbc.SetClient(qb.BearerToken{AccessToken: string(token)})
+		// Get query params
+		orderBy := r.URL.Query().Get("order_by")
+		pageSize := r.URL.Query().Get("page_size")
+		pageToken := r.URL.Query().Get("page_token")
+		query := r.URL.Query().Get("query")
+		if orderBy == "" {
+			orderBy = "DisplayName ASC"
+		}
+		if pageSize == "" {
+			pageSize = "10"
+		}
+		if pageToken == "" {
+			pageToken = "1"
+		}
+		if query == "" {
+			query = ""
+		}
+
+		customers, err := qbc.QueryCustomers(claims.QBCompanyID, orderBy, pageSize, pageToken, query)
+		if err != nil {
+			http.Error(w, "Could not get customers", http.StatusInternalServerError)
+			return
+		}
+		resp := response{Customers: customers}
+		encode(w, r, http.StatusOK, resp)
 	}
 }
 
@@ -663,3 +719,20 @@ func LoginQuickbooks(fbc *fb.Client, qbc *qb.Client, a *auth.Client, s *storage.
 // // 		json.NewEncoder(w).Encode(resp)
 // // 	}
 // // }
+
+func decryptJWE(jwe string) (string, error) {
+	encKey := config.LoadConfigs().JWEKey
+	rawKey, err := base64.StdEncoding.DecodeString(encKey)
+	if err != nil {
+		return "", err
+	}
+	decryptedObject, err := jose.ParseEncrypted(jwe)
+	if err != nil {
+		return "", err
+	}
+	decrypted, err := decryptedObject.Decrypt(rawKey)
+	if err != nil {
+		return "", err
+	}
+	return string(decrypted), nil
+}

@@ -2,16 +2,16 @@ package net
 
 import (
 	"context"
-	"log"
 	"net/http"
 	"strings"
 
 	"firebase.google.com/go/auth"
+	"github.com/Vertisphere/backend-service/internal/domain"
 )
 
 func verifyToken(c *auth.Client, h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/register" && r.Method == "POST" || r.URL.Path == "/qbLogin" && r.Method == "POST" {
+		if r.URL.Path == "/qbLogin" && r.Method == "POST" {
 			h.ServeHTTP(w, r)
 			return
 		}
@@ -29,22 +29,17 @@ func verifyToken(c *auth.Client, h http.Handler) http.Handler {
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
-		if (r.URL.Path == "/customToken" && r.Method == "GET") || ((r.URL.Path == "/franchise" || r.URL.Path == "/user") && r.Method == "POST") {
-			r = r.WithContext(context.WithValue(ctx, "account_id", token.UID))
-			h.ServeHTTP(w, r)
+		if token.Claims["is_franchiser"] == nil {
+			http.Error(w, "Not Custom Token", http.StatusUnauthorized)
 			return
 		}
-		log.Println(token.Claims)
-		if token.Claims["role"] == nil {
-			// Token is valid but not custom token
-			http.Error(w, "Not Custom Token", http.StatusUnauthorized)
+		claims := domain.Claims{
+			IsFranchiser:  token.Claims["is_franchiser"].(bool),
+			QBCompanyID:   token.Claims["qb_company_id"].(string),
+			QBBearerToken: token.Claims["qb_bearer_token"].(string),
+			FirebaseID:    token.Claims["firebase_id"].(string),
 		}
-		// call handler with token Claims info (app_id, franchise_id, role)
-		ctx = context.WithValue(ctx, "app_user_id", token.Claims["app_user_id"])
-		ctx = context.WithValue(ctx, "franchise_id", token.Claims["franchise_id"])
-		ctx = context.WithValue(ctx, "franchisee_id", token.Claims["franchisee_id"])
-		ctx = context.WithValue(ctx, "role", token.Claims["role"])
-		// log.Println(token.Claims["franchise_id"])
+		ctx = context.WithValue(ctx, "claims", claims)
 		r = r.WithContext(ctx)
 		h.ServeHTTP(w, r)
 	})
