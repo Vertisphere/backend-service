@@ -46,10 +46,10 @@ func main() {
 	defer store.Close()
 
 	// firebase client
-	firebaseClient := fb.NewClient(c.Firebase.APIKey)
+	firebaseClient, err := fb.NewClient(c.Firebase.APIKey)
 
 	// quickbooksClient
-	quickbooksClient := qb.NewClient(c.Quickbooks.ClientID, c.Quickbooks.ClientSecret, c.Quickbooks.RedirectURI, c.Quickbooks.IsProduction)
+	quickbooksClient, err := qb.NewClient(c.Quickbooks.ClientID, c.Quickbooks.ClientSecret, c.Quickbooks.RedirectURI, c.Quickbooks.IsProduction, c.Quickbooks.MinorVersion)
 
 	srv := mynet.NewServer(
 		ctx,

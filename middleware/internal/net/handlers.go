@@ -1,19 +1,60 @@
 package net
 
 import (
+	"encoding/base64"
+	"log"
 	"net/http"
+	"time"
 
+	"firebase.google.com/go/auth"
 	fb "github.com/Vertisphere/backend-service/external/firebase"
+	qb "github.com/Vertisphere/backend-service/external/quickbooks"
+	"github.com/Vertisphere/backend-service/internal/config"
+	"github.com/Vertisphere/backend-service/internal/storage"
+	"gopkg.in/square/go-jose.v2"
 )
 
-func CreateUser(fbc *fb.Client) http.HandlerFunc {
+// func CreateUser(fbc *fb.Client) http.HandlerFunc {
+// 	type request struct {
+// 		Email    string `json:"email"`
+// 		Password string `json:"password"`
+// 	}
+
+// 	type response struct {
+// 		Token string `json:"token"`
+// 		Success bool `json:"success"`
+// 	}
+
+// 	return func(w http.ResponseWriter, r *http.Request) {
+// 		req, err := decode[request](r)
+// 		if err != nil {
+// 			http.Error(w, "Invalid request payload", http.StatusBadRequest)
+// 			return
+// 		}
+// 		// Create user
+// 		err = fbc.CreateUser(req.Email, req.Password)
+// 		if err != nil {
+// 			http.Error(w, "Could not create user", http.StatusInternalServerError)
+// 			return
+// 		}
+// 		response := response{
+// 			Token:
+// 			Success: true}
+// 		encode(w, r, 200, response)
+// 	}
+// }
+
+func LoginQuickbooks(fbc *fb.Client, qbc *qb.Client, a *auth.Client, s *storage.SQLStorage) http.HandlerFunc {
 	type request struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
+		AuthCode        string `json:"auth_code"`
+		RealmID         string `json:"realm_id"`
+		UseCachedBearer bool   `json:"use_cached_bearer"`
 	}
 
 	type response struct {
-		Success bool `json:"success"`
+		Name    string `json:"name"`
+		Token   string `json:"token"`
+		Success bool   `json:"success"`
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -22,13 +63,120 @@ func CreateUser(fbc *fb.Client) http.HandlerFunc {
 			http.Error(w, "Invalid request payload", http.StatusBadRequest)
 			return
 		}
-		// Create user
-		err = fbc.CreateUser(req.Email, req.Password)
+		var bearerToken *qb.BearerToken
+		if req.UseCachedBearer {
+			dbCompany, err := s.GetCompany(req.RealmID)
+			if err != nil {
+				log.Println(err)
+				http.Error(w, "Could not get company from DB", http.StatusInternalServerError)
+				return
+			}
+			if dbCompany.QBBearerToken == "" {
+				http.Error(w, "No cached token", http.StatusBadRequest)
+				return
+			}
+			isTokenExpired := dbCompany.QBBearerTokenExpiry.Before(time.Now())
+			if isTokenExpired {
+				bearerToken, err = qbc.RefreshToken(dbCompany.QBRefreshToken)
+				if err != nil {
+					log.Println(err)
+					http.Error(w, "Could not refresh token in DB", http.StatusInternalServerError)
+					return
+				}
+				err = s.UpsertCompany(dbCompany.QBCompanyID, dbCompany.QBAuthCode, bearerToken.AccessToken, bearerToken.ExpiresIn, bearerToken.RefreshToken, bearerToken.XRefreshTokenExpiresIn)
+			} else {
+				bearerToken = &qb.BearerToken{AccessToken: dbCompany.QBBearerToken}
+			}
+		} else {
+			bearerToken, err = qbc.RetrieveBearerToken(req.AuthCode)
+			if err != nil {
+				log.Println(err)
+				http.Error(w, "Could not get token", http.StatusInternalServerError)
+				return
+			}
+
+			err = s.UpsertCompany(req.RealmID, req.AuthCode, bearerToken.AccessToken, bearerToken.ExpiresIn, bearerToken.RefreshToken, bearerToken.XRefreshTokenExpiresIn)
+			if err != nil {
+				log.Println(err)
+				http.Error(w, "Could not upsert company", http.StatusInternalServerError)
+				return
+			}
+		}
+		qbc.SetClient(*bearerToken)
+		userInfo, err := qbc.GetUserInfo()
 		if err != nil {
-			http.Error(w, "Could not create user", http.StatusInternalServerError)
+			log.Println(err)
+			http.Error(w, "Could not get user info", http.StatusInternalServerError)
 			return
 		}
-		response := response{Success: true}
+		firebaseID, err := s.IsFirebaseUser(req.RealmID)
+		if err != nil {
+			http.Error(w, "Could not check if user exists", http.StatusInternalServerError)
+			return
+		}
+		if firebaseID == "" {
+			// Password is base64 encoded realmID idk man
+			encodedRealmID := base64.StdEncoding.EncodeToString([]byte(req.RealmID))
+			createdUserResp, err := fbc.SignUp(userInfo.Email, encodedRealmID)
+			if err != nil {
+				log.Println(err)
+				http.Error(w, "Could not create user", http.StatusInternalServerError)
+				return
+			}
+			err = s.SetCompanyFirebaseID(req.RealmID, createdUserResp.LocalId)
+			if err != nil {
+				http.Error(w, "Could not link firebase ID of new user to company", http.StatusInternalServerError)
+				return
+			}
+			firebaseID = createdUserResp.LocalId
+		}
+
+		encKey := config.LoadConfigs().JWEKey
+		rawKey, err := base64.StdEncoding.DecodeString(encKey)
+		if err != nil {
+			log.Fatalf("Failed to decode Base64 key: %v", err)
+		}
+		encrypter, err := jose.NewEncrypter(jose.A256GCM, jose.Recipient{Algorithm: jose.DIRECT, Key: rawKey}, nil)
+		if err != nil {
+			log.Println(err)
+			http.Error(w, "Could not create encrypter", http.StatusInternalServerError)
+			return
+		}
+		object, err := encrypter.Encrypt([]byte(bearerToken.AccessToken))
+		if err != nil {
+			http.Error(w, "Could not encrypt token", http.StatusInternalServerError)
+			return
+		}
+		encryptedToken, err := object.CompactSerialize()
+		if err != nil {
+			http.Error(w, "Could not serialize token", http.StatusInternalServerError)
+			return
+		}
+
+		customTokenInternal, err := a.CustomTokenWithClaims(r.Context(), firebaseID, map[string]interface{}{
+			"qb_company_id":   req.RealmID,
+			"qb_bearer_token": encryptedToken,
+			"is_franchiser":   true,
+			"firebase_id":     firebaseID,
+			// For future
+			// is_admin
+		})
+		signInWithCustomTokenResp, err := fbc.SignInWithCustomToken(customTokenInternal)
+
+		// FOR PURELY DEBUGGING PURPOSES
+		// decryptedObject, err := jose.ParseEncrypted(encryptedToken)
+		// if err != nil {
+		// 	log.Fatalf("Failed to parse encrypted message: %v", err)
+		// }
+		// decrypted, err := decryptedObject.Decrypt(rawKey)
+		// if err != nil {
+		// 	log.Fatalf("Failed to decrypt message: %v", err)
+		// }
+		// log.Println(string(decrypted))
+
+		response := response{
+			Token:   signInWithCustomTokenResp.IdToken,
+			Success: true}
 		encode(w, r, 200, response)
 	}
 }

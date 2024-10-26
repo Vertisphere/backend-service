@@ -22,6 +22,7 @@ type Quickbooks struct {
 	ClientSecret string `envconfig:"QUICKBOOKS_CLIENT_SECRET"`
 	RedirectURI  string `envconfig:"QUICKBOOKS_REDIRECT_URI"`
 	IsProduction bool   `envconfig:"QUICKBOOKS_IS_PRODUCTION"`
+	MinorVersion string `envconfig:"QUICKBOOKS_MINOR_VERSION"`
 }
 
 // Config holds start up config information
@@ -34,6 +35,7 @@ type Config struct {
 	Port     string `envconfig:"PORT"`
 	LogDebug bool   `envconfig:"LOG_DEBUG" default:"false"`
 	UseCache string `envconfig:"USE_CACHE" default:"false"`
+	JWEKey   string `envconfig:"JWE_KEY"`
 	// HealthServerPort           string `envconfig:"HEALTH_SERVER_PORT" default:"8080"`
 	// GoogleConsumerEnabled      bool   `envconfig:"GOOGLE_CONSUMER_ENABLED" default:"false"`
 	// GoogleServiceAccountKey    string `envconfig:"GOOGLE_SERVICE_ACCOUNT_KEY"`

@@ -23,10 +23,11 @@ services:
       - DB_PASS=main_pass
       - DB_NAME=main
       - FIREBASE_API_KEY=AIzaSyB4aC40Zw1oUwRgGxqf8EGp2l2XQow-dpU
-      - QUICKBOOKS_CLIENT_ID=Q0
-      - QUICKBOOKS_CLIENT_SECRET=Q1
-      - QUICKBOOKS_REDIRECT_URI=http://localhost:8080/api/v1/auth/quickbooks/callback
+      - QUICKBOOKS_CLIENT_ID=ABRZXEqL4DpCxHz4OhdiuKg0BXaKIYf4QfVgqLdzC3SngxVNWy
+      - QUICKBOOKS_CLIENT_SECRET=I4hPumIZtLlRbvoks9f6Ovzn63sLOdomDBiY5X6S
+      - QUICKBOOKS_REDIRECT_URI=https://developer.intuit.com/v2/OAuth2Playground/RedirectUrl
       - QUICKBOOKS_IS_PRODUCTION=false
+      - JWE_KEY=KJZGB66mU0xTAFwOk4edH1GD/NxQxBfwxVkdtTf0OqY=
     ports:
       - 8080:8080
 

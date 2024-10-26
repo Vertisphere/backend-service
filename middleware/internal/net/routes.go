@@ -23,6 +23,10 @@ func addRoutes(
 	mux.Handle("/", http.NotFoundHandler())
 
 	// We're creating a firebase user for franchiser not franchisee
-	// Nothing in schema for "user"
-	mux.Handle("POST /register", CreateUser(fbc))
+	mux.Handle("POST /qbLogin", LoginQuickbooks(fbc, qbc, auth, storage))
+	// mux.Handle("POST /register", CreateUser(fbc))
+
+	// mux.Handle("POST /company", CreateCompany(fbc, qbc, storage))
+	// email and password -> get firebase user -> get firebase token -> get quickbooks token -> store in db
+	// mux.Handle("POST /login", LoginUser(fbc))
 }

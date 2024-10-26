@@ -3,7 +3,6 @@ package storage
 import (
 	"database/sql"
 	"fmt"
-	"log"
 
 	"github.com/Vertisphere/backend-service/internal/domain"
 	_ "github.com/lib/pq"
@@ -31,254 +30,370 @@ func (s *SQLStorage) Close() error {
 	return s.db.Close()
 }
 
-func (s SQLStorage) CreateFranchise(admin_account_id string, franchise domain.Franchise) error {
-	// deconstruct franchise object  and insert into franchise table
-	// Construct query string
-	// TODO: Right now the flow is shit af
-	// Basically, I'm not sure how we want to do the business logic on this
-	// Like do we want an account to be able to create multiple franchises???
-	// Anyways, the current apporach to make sure that an admin user can be created securely
-	// If a post /user comes in to create a user, it will create the franchise id,
-	// then we query the franchise entry, check the admin_account_id, and verify that the account_ID in the entry matches the one in the JWT.
-	// I know its shit but I can't think of something better rn
-
+func (s SQLStorage) UpsertCompany(companyId string, authCode string, bearerToken string, bearerExpiresIn int64, refreshToken string, refreshExpiresIn int64) error {
+	// Create TIMESTAMP from current time + expiresIn
+	bearerExpiry := fmt.Sprintf("NOW() + INTERVAL '%d seconds'", bearerExpiresIn)
+	refreshExpiry := fmt.Sprintf("NOW() + INTERVAL '%d seconds'", refreshExpiresIn)
 	query := fmt.Sprintf(
-		"INSERT INTO franchise(franchise_name, headquarters_address, phone_number, admin_account_id) VALUES('%s', '%s', '%s', '%s')",
-		franchise.FranchiseName, franchise.HeadquartersAddress, franchise.PhoneNumber, admin_account_id,
+		`INSERT INTO company(
+			qb_company_id, qb_auth_code, qb_bearer_token, qb_bearer_token_expiry, qb_refresh_token, qb_refresh_token_expiry
+		) VALUES($1, $2, $3, %s, $4, %s)
+		ON CONFLICT (qb_company_id) DO UPDATE SET
+			qb_auth_code = EXCLUDED.qb_auth_code,
+			qb_bearer_token = EXCLUDED.qb_bearer_token,
+			qb_bearer_token_expiry = EXCLUDED.qb_bearer_token_expiry,
+			qb_refresh_token = EXCLUDED.qb_refresh_token,
+			qb_refresh_token_expiry = EXCLUDED.qb_refresh_token_expiry;`,
+		bearerExpiry, refreshExpiry,
 	)
-
-	log.Println("Executing query:", query)
-
-	_, err := s.db.Exec(query)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (s SQLStorage) GetFranchiseIDFromAccountId(accountID string) (int, error) {
-	var franchiseID int
-	query := "SELECT franchise_id FROM franchise WHERE admin_account_id = $1"
-	err := s.db.QueryRow(query, accountID).Scan(&franchiseID)
-	if err != nil {
-		return 0, err
-	}
-	return franchiseID, nil
-}
-
-func (s SQLStorage) CreateFranchiseUser(accountID string, franchiseID int, name string) error {
-	// Setting all to role = 3 for now
-	query := fmt.Sprintf(
-		"INSERT INTO app_user(account_id, franchise_id, role, name) VALUES ('%s', '%d', '%d', '%s')",
-		accountID, franchiseID, 3, name,
-	)
-	log.Println("Executing query:", query)
-
-	_, err := s.db.Exec(query)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (s SQLStorage) CreateFranchiseeUser(accountId string, franchiseId int, franchiseeId int, name string) error {
-	// Setting all to role = 1 for now
-	// Create Franchisee in Database
-	query := fmt.Sprintf(
-		"INSERT INTO app_user(account_id, franchise_id, franchisee_id, role, name) VALUES ('%s', '%d', '%d', '%d', '%s')",
-		accountId, franchiseId, franchiseeId, 1, name,
-	)
-	log.Println("Executing query:", query)
-
-	_, err := s.db.Exec(query)
+	_, err := s.db.Exec(query, companyId, authCode, bearerToken, refreshToken)
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-func (s SQLStorage) GetUserClaims(accountID string) (int, int, int, int, error) {
-	var userID int
-	var franchise_id int
-	var franchisee_id sql.NullInt32
-	var role int
-	query := "SELECT user_id, franchise_id, franchisee_id, role FROM app_user WHERE account_id = $1"
-	err := s.db.QueryRow(query, accountID).Scan(&userID, &franchise_id, &franchisee_id, &role)
+func (s SQLStorage) IsFirebaseUser(companyID string) (string, error) {
+	var firebaseID sql.NullString
+	query := "SELECT firebase_id FROM company where qb_company_id = $1"
+	err := s.db.QueryRow(query, companyID).Scan(&firebaseID)
 	if err != nil {
-		return 0, 0, 0, 0, err
+		return "", err
 	}
-	if !franchisee_id.Valid {
-		return userID, franchise_id, 0, role, nil
+	if firebaseID.Valid {
+		return firebaseID.String, nil
 	} else {
-		return userID, franchise_id, int(franchisee_id.Int32), role, nil
+		return "", nil
 	}
 }
 
-func (s SQLStorage) CreateFranchisee(franchiseId int, franchiseeName string, headquartersAddress string, phone string) (int, error) {
-	// Create Franchisee in Database
-	// and return the franchisee_id
-	var franchise_id int
-	query := fmt.Sprintf(
-		"INSERT INTO franchisee(franchise_id, franchisee_name, headquarters_address, phone_number) VALUES ('%d', '%s', '%s', '%s') RETURNING franchisee_id",
-		franchiseId, franchiseeName, headquartersAddress, phone,
+// func (s SQLStorage) UpdateCompany(company domain.Company) error {
+// 	// Reflect on the company struct
+// 	v := reflect.ValueOf(company)
+// 	t := reflect.TypeOf(company)
+
+// 	var updates []string
+// 	var args []interface{}
+
+// 	// Iterate through the struct fields
+// 	for i := 0; i < v.NumField(); i++ {
+// 		fieldValue := v.Field(i)
+// 		fieldType := t.Field(i)
+
+// 		// Check if the field is empty
+// 		if fieldValue.Interface() == "" {
+// 			continue
+// 		}
+
+// 		// Get the db tag for the field
+// 		dbTag := fieldType.Tag.Get("db")
+// 		if dbTag == "" {
+// 			continue
+// 		}
+
+// 		// Add to the update list and args if the field is not empty
+// 		updates = append(updates, fmt.Sprintf("%s = ?", dbTag))
+// 		args = append(args, fieldValue.Interface())
+// 	}
+
+// 	// If no fields to update, return early
+// 	if len(updates) == 0 {
+// 		return fmt.Errorf("no fields to update")
+// 	}
+
+// 	// Assuming qb_company_id is the unique identifier for the WHERE clause
+// 	query := fmt.Sprintf("UPDATE company SET %s WHERE qb_company_id = ?", strings.Join(updates, ", "))
+// 	args = append(args, company.QBCompanyID)
+
+// 	// Execute the update query
+// 	_, err := s.db.Exec(query, args...)
+// 	if err != nil {
+// 		return fmt.Errorf("failed to update company: %w", err)
+// 	}
+// 	return nil
+// }
+
+func (s SQLStorage) GetCompany(companyID string) (domain.Company, error) {
+	var company domain.Company
+	var firebaseID sql.NullString
+	query := `
+		SELECT qb_company_id, firebase_id, qb_auth_code, qb_bearer_token, 
+			   qb_bearer_token_expiry, qb_refresh_token, qb_refresh_token_expiry 
+		FROM company 
+		WHERE qb_company_id = $1
+	`
+	err := s.db.QueryRow(query, companyID).Scan(
+		&company.QBCompanyID, &firebaseID, &company.QBAuthCode,
+		&company.QBBearerToken, &company.QBBearerTokenExpiry,
+		&company.QBRefreshToken, &company.QBRefreshTokenExpiry,
 	)
-	log.Println("Executing query:", query)
-	err := s.db.QueryRow(query).Scan(&franchise_id)
 	if err != nil {
-		return 0, err
+		return domain.Company{}, err
 	}
-	return franchise_id, nil
+	company.FirebaseID = ""
+	if firebaseID.Valid {
+		company.FirebaseID = firebaseID.String
+	}
+	return company, nil
 }
 
-func (s SQLStorage) CreateProduct(franchiseId int, name string, description string, price float64) (int, error) {
-	// Create Product in Database and get the product_id
-	var product_id int
-	query := fmt.Sprintf(
-		"INSERT INTO product(franchise_id, product_name, description, price, product_status) VALUES ('%d', '%s', '%s', '%f', '%d') RETURNING product_id",
-		franchiseId, name, description, price, 0,
-	)
-	log.Println("Executing query:", query)
-
-	err := s.db.QueryRow(query).Scan(&product_id)
+func (s SQLStorage) SetCompanyFirebaseID(companyID string, firebaseID string) error {
+	query := "UPDATE company SET firebase_id = $1 WHERE qb_company_id = $2"
+	_, err := s.db.Exec(query, firebaseID, companyID)
 	if err != nil {
-		return 0, err
+		return err
 	}
-	return product_id, nil
+	return nil
 }
 
-func (s SQLStorage) ListProducts(franchiseId int, pageSize int, pageToken string, orderBy string) ([]domain.Product, string, error) {
-	var nextToken string
-	var products []domain.Product
-	var rows *sql.Rows
-	var err error
+// func (s SQLStorage) CreateFranchise(admin_account_id string, franchise domain.Franchise) error {
+// 	// deconstruct franchise object  and insert into franchise table
+// 	// Construct query string
+// 	// TODO: Right now the flow is shit af
+// 	// Basically, I'm not sure how we want to do the business logic on this
+// 	// Like do we want an account to be able to create multiple franchises???
+// 	// Anyways, the current apporach to make sure that an admin user can be created securely
+// 	// If a post /user comes in to create a user, it will create the franchise id,
+// 	// then we query the franchise entry, check the admin_account_id, and verify that the account_ID in the entry matches the one in the JWT.
+// 	// I know its shit but I can't think of something better rn
 
-	// query with pagination
-	if pageToken == "" {
-		dbQuery := fmt.Sprintf("SELECT * FROM product WHERE franchise_id = $1 ORDER BY %s LIMIT $2", orderBy)
-		rows, err = s.db.Query(dbQuery,
-			franchiseId, pageSize)
-	} else {
-		dbQuery := fmt.Sprintf("SELECT * FROM product WHERE franchise_id = $1 AND product_id > $2 ORDER BY %s LIMIT $3", orderBy)
-		rows, err = s.db.Query(dbQuery,
-			franchiseId, pageToken, pageSize)
-	}
+// 	query := fmt.Sprintf(
+// 		"INSERT INTO franchise(franchise_name, headquarters_address, phone_number, admin_account_id) VALUES('%s', '%s', '%s', '%s')",
+// 		franchise.FranchiseName, franchise.HeadquartersAddress, franchise.PhoneNumber, admin_account_id,
+// 	)
 
-	if err != nil {
-		return nil, "", err
-	}
+// 	log.Println("Executing query:", query)
 
-	for rows.Next() {
-		var product domain.Product
-		err = rows.Scan(&product.ID, &product.FranchiseID, &product.ProductName, &product.Description, &product.Price, &product.ProductStatus, &product.CreatedAt, &product.UpdatedAt)
-		if err != nil {
-			return nil, "", err
-		}
-		products = append(products, product)
-	}
+// 	_, err := s.db.Exec(query)
+// 	if err != nil {
+// 		return err
+// 	}
 
-	if len(products) != 0 {
-		nextToken = fmt.Sprintf("%d", products[len(products)-1].ID)
-	} else {
-		nextToken = pageToken
-	}
+// 	return nil
+// }
 
-	return products, nextToken, nil
-}
+// func (s SQLStorage) GetFranchiseIDFromAccountId(accountID string) (int, error) {
+// 	var franchiseID int
+// 	query := "SELECT franchise_id FROM franchise WHERE admin_account_id = $1"
+// 	err := s.db.QueryRow(query, accountID).Scan(&franchiseID)
+// 	if err != nil {
+// 		return 0, err
+// 	}
+// 	return franchiseID, nil
+// }
 
-func (s SQLStorage) SearchProducts(franchiseId int, query string, pageSize int, pageToken string, orderBy string) ([]domain.Product, string, error) {
-	// For now we use ILIKE but in the future implement tsvector
-	var nextToken string
-	var products []domain.Product
-	var rows *sql.Rows
-	var err error
-	// mutate query to add percentage signs
-	query = "%" + query + "%"
-	if pageToken == "" {
-		dbQuery := fmt.Sprintf("SELECT * FROM product WHERE franchise_id = $1 AND (product_name ILIKE $2 OR description ILIKE $2) ORDER BY %s LIMIT $3", orderBy)
-		rows, err = s.db.Query(dbQuery,
-			franchiseId, query, pageSize)
-	} else {
-		dbQuery := fmt.Sprintf("SELECT * FROM product WHERE franchise_id = $1 AND (product_name ILIKE $2 OR description ILIKE $2) AND product_id > $3 ORDER BY %s LIMIT $4", orderBy)
-		rows, err = s.db.Query(dbQuery,
-			franchiseId, query, pageToken, pageSize)
-	}
+// func (s SQLStorage) CreateFranchiseUser(accountID string, franchiseID int, name string) error {
+// 	// Setting all to role = 3 for now
+// 	query := fmt.Sprintf(
+// 		"INSERT INTO app_user(account_id, franchise_id, role, name) VALUES ('%s', '%d', '%d', '%s')",
+// 		accountID, franchiseID, 3, name,
+// 	)
+// 	log.Println("Executing query:", query)
 
-	if err != nil {
-		return nil, "", err
-	}
+// 	_, err := s.db.Exec(query)
+// 	if err != nil {
+// 		return err
+// 	}
 
-	for rows.Next() {
-		var product domain.Product
-		err = rows.Scan(&product.ID, &product.FranchiseID, &product.ProductName, &product.Description, &product.Price, &product.ProductStatus, &product.CreatedAt, &product.UpdatedAt)
-		if err != nil {
-			return nil, "", err
-		}
-		products = append(products, product)
-	}
+// 	return nil
+// }
 
-	if len(products) != 0 {
-		nextToken = fmt.Sprintf("%d", products[len(products)-1].ID)
-	} else {
-		nextToken = pageToken
-	}
+// func (s SQLStorage) CreateFranchiseeUser(accountId string, franchiseId int, franchiseeId int, name string) error {
+// 	// Setting all to role = 1 for now
+// 	// Create Franchisee in Database
+// 	query := fmt.Sprintf(
+// 		"INSERT INTO app_user(account_id, franchise_id, franchisee_id, role, name) VALUES ('%s', '%d', '%d', '%d', '%s')",
+// 		accountId, franchiseId, franchiseeId, 1, name,
+// 	)
+// 	log.Println("Executing query:", query)
 
-	return products, nextToken, nil
-}
+// 	_, err := s.db.Exec(query)
+// 	if err != nil {
+// 		return err
+// 	}
+// 	return nil
+// }
 
-// TODO: fix type signature somehow
-// Probably add struct for Order and OrderRequest in the domain file?
-func (s SQLStorage) CreateOrder(appUserId int, franchiseId int, franchiseeId int, products domain.Products) (int, error) {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return 0, err
-	}
+// func (s SQLStorage) GetUserClaims(accountID string) (int, int, int, int, error) {
+// 	var userID int
+// 	var franchise_id int
+// 	var franchisee_id sql.NullInt32
+// 	var role int
+// 	query := "SELECT user_id, franchise_id, franchisee_id, role FROM app_user WHERE account_id = $1"
+// 	err := s.db.QueryRow(query, accountID).Scan(&userID, &franchise_id, &franchisee_id, &role)
+// 	if err != nil {
+// 		return 0, 0, 0, 0, err
+// 	}
+// 	if !franchisee_id.Valid {
+// 		return userID, franchise_id, 0, role, nil
+// 	} else {
+// 		return userID, franchise_id, int(franchisee_id.Int32), role, nil
+// 	}
+// }
 
-	defer func() {
-		if err != nil {
-			tx.Rollback()
-		} else {
-			tx.Commit()
-		}
-	}()
+// func (s SQLStorage) CreateFranchisee(franchiseId int, franchiseeName string, headquartersAddress string, phone string) (int, error) {
+// 	// Create Franchisee in Database
+// 	// and return the franchisee_id
+// 	var franchise_id int
+// 	query := fmt.Sprintf(
+// 		"INSERT INTO franchisee(franchise_id, franchisee_name, headquarters_address, phone_number) VALUES ('%d', '%s', '%s', '%s') RETURNING franchisee_id",
+// 		franchiseId, franchiseeName, headquartersAddress, phone,
+// 	)
+// 	log.Println("Executing query:", query)
+// 	err := s.db.QueryRow(query).Scan(&franchise_id)
+// 	if err != nil {
+// 		return 0, err
+// 	}
+// 	return franchise_id, nil
+// }
 
-	var total float64
-	var order_id int
-	total = 0.00
+// func (s SQLStorage) CreateProduct(franchiseId int, name string, description string, price float64) (int, error) {
+// 	// Create Product in Database and get the product_id
+// 	var product_id int
+// 	query := fmt.Sprintf(
+// 		"INSERT INTO product(franchise_id, product_name, description, price, product_status) VALUES ('%d', '%s', '%s', '%f', '%d') RETURNING product_id",
+// 		franchiseId, name, description, price, 0,
+// 	)
+// 	log.Println("Executing query:", query)
 
-	// Create Order in Database and get the order_id
-	err = tx.QueryRow("INSERT INTO orders(franchise_id, franchisee_id, created_by) VALUES ($1, $2, $3) RETURNING order_id", franchiseId, franchiseeId, appUserId).Scan(&order_id)
-	if err != nil {
-		return 0, err
-	}
+// 	err := s.db.QueryRow(query).Scan(&product_id)
+// 	if err != nil {
+// 		return 0, err
+// 	}
+// 	return product_id, nil
+// }
 
-	// Create Order Product in join table
-	for _, product := range products {
-		// Get price of product
-		var price float64
-		err = tx.QueryRow("SELECT price FROM product WHERE product_id = $1", product.ProductID).Scan(&price)
-		if err != nil {
-			return 0, err
-		}
+// func (s SQLStorage) ListProducts(franchiseId int, pageSize int, pageToken string, orderBy string) ([]domain.Product, string, error) {
+// 	var nextToken string
+// 	var products []domain.Product
+// 	var rows *sql.Rows
+// 	var err error
 
-		// Insert into order_product table
-		_, err = tx.Exec("INSERT INTO order_product(order_id, product_id, quantity, price) VALUES ($1, $2, $3, $4)", order_id, product.ProductID, product.Quantity, price)
-		if err != nil {
-			return 0, err
-		}
+// 	// query with pagination
+// 	if pageToken == "" {
+// 		dbQuery := fmt.Sprintf("SELECT * FROM product WHERE franchise_id = $1 ORDER BY %s LIMIT $2", orderBy)
+// 		rows, err = s.db.Query(dbQuery,
+// 			franchiseId, pageSize)
+// 	} else {
+// 		dbQuery := fmt.Sprintf("SELECT * FROM product WHERE franchise_id = $1 AND product_id > $2 ORDER BY %s LIMIT $3", orderBy)
+// 		rows, err = s.db.Query(dbQuery,
+// 			franchiseId, pageToken, pageSize)
+// 	}
 
-		// Add to total
-		total += price * float64(product.Quantity)
-	}
+// 	if err != nil {
+// 		return nil, "", err
+// 	}
 
-	// Insert total into order table
-	_, err = tx.Exec("UPDATE orders SET total = $1 WHERE order_id = $2", total, order_id)
-	if err != nil {
-		return 0, err
-	}
-	return order_id, nil
-}
+// 	for rows.Next() {
+// 		var product domain.Product
+// 		err = rows.Scan(&product.ID, &product.FranchiseID, &product.ProductName, &product.Description, &product.Price, &product.ProductStatus, &product.CreatedAt, &product.UpdatedAt)
+// 		if err != nil {
+// 			return nil, "", err
+// 		}
+// 		products = append(products, product)
+// 	}
+
+// 	if len(products) != 0 {
+// 		nextToken = fmt.Sprintf("%d", products[len(products)-1].ID)
+// 	} else {
+// 		nextToken = pageToken
+// 	}
+
+// 	return products, nextToken, nil
+// }
+
+// func (s SQLStorage) SearchProducts(franchiseId int, query string, pageSize int, pageToken string, orderBy string) ([]domain.Product, string, error) {
+// 	// For now we use ILIKE but in the future implement tsvector
+// 	var nextToken string
+// 	var products []domain.Product
+// 	var rows *sql.Rows
+// 	var err error
+// 	// mutate query to add percentage signs
+// 	query = "%" + query + "%"
+// 	if pageToken == "" {
+// 		dbQuery := fmt.Sprintf("SELECT * FROM product WHERE franchise_id = $1 AND (product_name ILIKE $2 OR description ILIKE $2) ORDER BY %s LIMIT $3", orderBy)
+// 		rows, err = s.db.Query(dbQuery,
+// 			franchiseId, query, pageSize)
+// 	} else {
+// 		dbQuery := fmt.Sprintf("SELECT * FROM product WHERE franchise_id = $1 AND (product_name ILIKE $2 OR description ILIKE $2) AND product_id > $3 ORDER BY %s LIMIT $4", orderBy)
+// 		rows, err = s.db.Query(dbQuery,
+// 			franchiseId, query, pageToken, pageSize)
+// 	}
+
+// 	if err != nil {
+// 		return nil, "", err
+// 	}
+
+// 	for rows.Next() {
+// 		var product domain.Product
+// 		err = rows.Scan(&product.ID, &product.FranchiseID, &product.ProductName, &product.Description, &product.Price, &product.ProductStatus, &product.CreatedAt, &product.UpdatedAt)
+// 		if err != nil {
+// 			return nil, "", err
+// 		}
+// 		products = append(products, product)
+// 	}
+
+// 	if len(products) != 0 {
+// 		nextToken = fmt.Sprintf("%d", products[len(products)-1].ID)
+// 	} else {
+// 		nextToken = pageToken
+// 	}
+
+// 	return products, nextToken, nil
+// }
+
+// // TODO: fix type signature somehow
+// // Probably add struct for Order and OrderRequest in the domain file?
+// func (s SQLStorage) CreateOrder(appUserId int, franchiseId int, franchiseeId int, products domain.Products) (int, error) {
+// 	tx, err := s.db.Begin()
+// 	if err != nil {
+// 		return 0, err
+// 	}
+
+// 	defer func() {
+// 		if err != nil {
+// 			tx.Rollback()
+// 		} else {
+// 			tx.Commit()
+// 		}
+// 	}()
+
+// 	var total float64
+// 	var order_id int
+// 	total = 0.00
+
+// 	// Create Order in Database and get the order_id
+// 	err = tx.QueryRow("INSERT INTO orders(franchise_id, franchisee_id, created_by) VALUES ($1, $2, $3) RETURNING order_id", franchiseId, franchiseeId, appUserId).Scan(&order_id)
+// 	if err != nil {
+// 		return 0, err
+// 	}
+
+// 	// Create Order Product in join table
+// 	for _, product := range products {
+// 		// Get price of product
+// 		var price float64
+// 		err = tx.QueryRow("SELECT price FROM product WHERE product_id = $1", product.ProductID).Scan(&price)
+// 		if err != nil {
+// 			return 0, err
+// 		}
+
+// 		// Insert into order_product table
+// 		_, err = tx.Exec("INSERT INTO order_product(order_id, product_id, quantity, price) VALUES ($1, $2, $3, $4)", order_id, product.ProductID, product.Quantity, price)
+// 		if err != nil {
+// 			return 0, err
+// 		}
+
+// 		// Add to total
+// 		total += price * float64(product.Quantity)
+// 	}
+
+// 	// Insert total into order table
+// 	_, err = tx.Exec("UPDATE orders SET total = $1 WHERE order_id = $2", total, order_id)
+// 	if err != nil {
+// 		return 0, err
+// 	}
+// 	return order_id, nil
+// }
 
 // func (s SQLStorage) ReadUser(id string) (bool, bool, error) {
 // 	//get is_franchiser and is_admin from users table where id = id
@@ -444,4 +559,69 @@ func (s SQLStorage) CreateOrder(appUserId int, franchiseId int, franchiseeId int
 // 	}
 
 // 	return nil
+// }
+
+// func (s SQLStorage) GetCompany(companyID string) (domain.Company, error) {
+// 	var company domain.Company
+// 	query := "SELECT * FROM company WHERE qb_company_id = $1"
+
+// 	// Use Query instead of QueryRow to get columns metadata
+// 	rows, err := s.db.Query(query, companyID)
+// 	if err != nil {
+// 		return domain.Company{}, err
+// 	}
+// 	defer rows.Close()
+
+// 	// Check if there are any results
+// 	if !rows.Next() {
+// 		if err := rows.Err(); err != nil {
+// 			return domain.Company{}, err
+// 		}
+// 		return domain.Company{}, sql.ErrNoRows
+// 	}
+
+// 	// Get column names
+// 	columns, err := rows.Columns()
+// 	if err != nil {
+// 		return domain.Company{}, err
+// 	}
+
+// 	// Create a slice of pointers to match the columns
+// 	values := make([]interface{}, len(columns))
+// 	structValue := reflect.ValueOf(&company).Elem()
+// 	fieldMap := make(map[string]interface{})
+
+// 	for i := 0; i < structValue.NumField(); i++ {
+// 		field := structValue.Type().Field(i)
+// 		dbTag := field.Tag.Get("db")
+// 		if dbTag != "" {
+// 			fieldMap[dbTag] = structValue.Field(i).Addr().Interface()
+// 		}
+// 	}
+
+// 	for i, col := range columns {
+// 		// Handle nullable columns dynamically
+// 		if fieldMap[col] != nil {
+// 			values[i] = fieldMap[col]
+// 		} else {
+// 			// Handle nullable fields with sql.NullString for non-pointer string fields
+// 			var sqlNull sql.NullString
+// 			values[i] = &sqlNull
+// 			fieldMap[col] = &sqlNull
+// 		}
+// 	}
+
+// 	// Scan the result
+// 	if err := rows.Scan(values...); err != nil {
+// 		return domain.Company{}, err
+// 	}
+
+// 	// Set any nullable fields manually
+// 	for key, val := range fieldMap {
+// 		if ns, ok := val.(*sql.NullString); ok && !ns.Valid && key == "firebase_id" {
+// 			structValue.FieldByName("FirebaseID").SetString("")
+// 		}
+// 	}
+
+// 	return company, nil
 // }

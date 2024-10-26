@@ -15,14 +15,14 @@ type Client struct {
 }
 
 // NewClient creates a new Firebase client.
-func NewClient(apiKey string) *Client {
+func NewClient(apiKey string) (*Client, error) {
 	return &Client{
 		apiKey: apiKey,
-	}
+	}, nil
 }
 
 // CreateUser creates a new user in Firebase.
-func (c *Client) CreateUser(email string, password string) error {
+func (c *Client) SignUp(email string, password string) (CreateUserResponse, error) {
 	url := "https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=" + c.apiKey
 	params := map[string]string{
 		"email":             email,
@@ -33,19 +33,56 @@ func (c *Client) CreateUser(email string, password string) error {
 	body, err := json.Marshal(params)
 	if err != nil {
 		log.Errorf("failed to marshal body: %v", err)
-		return err
+		return CreateUserResponse{}, err
 	}
 
 	resp, err := http.Post(url, "application/json", bytes.NewBuffer(body))
 	if err != nil {
 		log.Errorf("firebase request failed: %v", err)
-		return err
+		return CreateUserResponse{}, err
 	}
 
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("non 200 response code from Firebase %s", resp.Status)
+		return CreateUserResponse{}, fmt.Errorf("non 200 response code from Firebase %s", resp.Status)
 	}
-	return nil
+
+	var resData CreateUserResponse
+	if err := json.NewDecoder(resp.Body).Decode(&resData); err != nil {
+		return CreateUserResponse{}, err
+	}
+	return resData, nil
+}
+
+func (c *Client) SignInWithCustomToken(customTokenInternal string) (SignInWithCustomTokenResponse, error) {
+	url := "https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=" + c.apiKey
+	params := map[string]string{
+		"token":             customTokenInternal,
+		"returnSecureToken": "true",
+	}
+
+	body, err := json.Marshal(params)
+	if err != nil {
+		log.Errorf("failed to marshal body: %v", err)
+		return SignInWithCustomTokenResponse{}, err
+	}
+
+	resp, err := http.Post(url, "application/json", bytes.NewBuffer(body))
+	if err != nil {
+		log.Errorf("firebase request failed: %v", err)
+		return SignInWithCustomTokenResponse{}, err
+	}
+
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return SignInWithCustomTokenResponse{}, fmt.Errorf("non 200 response code from Firebase %s", resp.Status)
+	}
+
+	var resData SignInWithCustomTokenResponse
+	if err := json.NewDecoder(resp.Body).Decode(&resData); err != nil {
+		return SignInWithCustomTokenResponse{}, err
+	}
+	return resData, nil
 }
