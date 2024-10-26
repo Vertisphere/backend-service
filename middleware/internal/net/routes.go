@@ -26,7 +26,10 @@ func addRoutes(
 	// We're creating a firebase user for franchiser not franchisee
 	mux.Handle("POST /qbLogin", LoginQuickbooks(fbc, qbc, auth, storage))
 
-	mux.Handle("GET /customers", ListCustomers(qbc))
+	mux.Handle("GET /qbCustomers", ListQBCustomers(qbc))
+
+	// We're creating a firebase user for franchisee
+	// mux.Handle("POST /customers", CreateCustomer(fbc, qbc, auth, storage))
 
 	mux.Handle("/", ShowClaims())
 	// mux.Handle("POST /register", CreateUser(fbc))

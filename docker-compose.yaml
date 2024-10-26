@@ -22,7 +22,7 @@ services:
       - DB_USER=main_user
       - DB_PASS=main_pass
       - DB_NAME=main
-      - FIREBASE_API_KEY=AIzaSyB4aC40Zw1oUwRgGxqf8EGp2l2XQow-dpU
+      - FIREBASE_API_KEY=AIzaSyDzrxSSnN_S0ySi8pM6_4ld83Iy5y4OLqM
       - QUICKBOOKS_CLIENT_ID=ABRZXEqL4DpCxHz4OhdiuKg0BXaKIYf4QfVgqLdzC3SngxVNWy
       - QUICKBOOKS_CLIENT_SECRET=I4hPumIZtLlRbvoks9f6Ovzn63sLOdomDBiY5X6S
       - QUICKBOOKS_REDIRECT_URI=https://developer.intuit.com/v2/OAuth2Playground/RedirectUrl

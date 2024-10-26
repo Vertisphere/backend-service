@@ -50,6 +50,20 @@ type Customer struct {
 	// CurrencyRef
 }
 
+// FindCustomerById returns a customer with a given Id.
+func (c *Client) GetCustomerById(realmID, id string) (*Customer, error) {
+	var r struct {
+		Customer Customer
+		Time     Date
+	}
+
+	if err := c.get(realmID, "customer/"+id, &r, nil); err != nil {
+		return nil, err
+	}
+
+	return &r.Customer, nil
+}
+
 // QueryCustomers accepts an SQL query and returns all customers found using it
 func (c *Client) QueryCustomers(realmID string, orderBy string, pageSize string, pageToken string, searchQuery string) ([]Customer, error) {
 	var resp struct {
@@ -150,20 +164,6 @@ func (c *Client) QueryCustomers(realmID string, orderBy string, pageSize string,
 // 	}
 
 // 	return customers, nil
-// }
-
-// FindCustomerById returns a customer with a given Id.
-// func (c *Client) FindCustomerById(id string) (*Customer, error) {
-// 	var r struct {
-// 		Customer Customer
-// 		Time     Date
-// 	}
-
-// 	if err := c.get("customer/"+id, &r, nil); err != nil {
-// 		return nil, err
-// 	}
-
-// 	return &r.Customer, nil
 // }
 
 // // FindCustomerByName gets a customer with a given name.

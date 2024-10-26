@@ -6,9 +6,11 @@ CREATE TABLE company (
     qb_refresh_token VARCHAR NOT NULL,
     qb_refresh_token_expiry TIMESTAMP NOT NULL,
     firebase_id VARCHAR(50) UNIQUE NULL
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 );
 
 CREATE TABLE customer (
     qb_customer_id VARCHAR(50) PRIMARY KEY,
-    firebase_id VARCHAR(50) UNIQUE NOT NULL
+    firebase_id VARCHAR(50) UNIQUE NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 );

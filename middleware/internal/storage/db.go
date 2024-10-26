@@ -146,6 +146,15 @@ func (s SQLStorage) SetCompanyFirebaseID(companyID string, firebaseID string) er
 	return nil
 }
 
+func (s SQLStorage) CreateCustomer(companyID string, customerID string, firebaseID string) error {
+	query := "INSERT INTO customer(qb_company_id, qb_customer_id, firebase_id) VALUES($1, $2, $3)"
+	_, err := s.db.Exec(query, companyID, customerID, firebaseID)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 // func (s SQLStorage) CreateFranchise(admin_account_id string, franchise domain.Franchise) error {
 // 	// deconstruct franchise object  and insert into franchise table
 // 	// Construct query string

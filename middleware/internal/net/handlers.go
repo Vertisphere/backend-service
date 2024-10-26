@@ -190,7 +190,7 @@ func LoginQuickbooks(fbc *fb.Client, qbc *qb.Client, a *auth.Client, s *storage.
 	}
 }
 
-func ListCustomers(qbc *qb.Client) http.HandlerFunc {
+func ListQBCustomers(qbc *qb.Client) http.HandlerFunc {
 	// type request struct {
 	// 	OrderBy   string `json:"order_by"`
 	// 	PageSize  string `json:"page_size"`
@@ -234,6 +234,67 @@ func ListCustomers(qbc *qb.Client) http.HandlerFunc {
 		}
 		resp := response{Customers: customers}
 		encode(w, r, http.StatusOK, resp)
+	}
+}
+
+func CreateCustomer(fbc *fb.Client, qbc *qb.Client, a *auth.Client, s *storage.SQLStorage) http.HandlerFunc {
+	type request struct {
+		QBCustomerID  string `json:"qb_customer_id"`
+		CustomerEmail string `json:"customer_email"`
+	}
+
+	type response struct {
+		Success bool `json:"success"`
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		// get claims from context
+		claims := r.Context().Value("claims").(domain.Claims)
+		token, err := decryptJWE(claims.QBBearerToken)
+		if err != nil {
+			http.Error(w, "Could not decrypt QB token", http.StatusUnauthorized)
+			return
+		}
+		qbc.SetClient(qb.BearerToken{AccessToken: string(token)})
+
+		req, err := decode[request](r)
+		if err != nil {
+			http.Error(w, "Invalid request payload", http.StatusBadRequest)
+			return
+		}
+		customer, err := qbc.GetCustomerById(claims.QBCompanyID, req.QBCustomerID)
+		if err != nil {
+			http.Error(w, "Could not get customer", http.StatusInternalServerError)
+			return
+		}
+		// Create firebase account for customer
+		encodedRealmID := base64.StdEncoding.EncodeToString([]byte(claims.QBCompanyID))
+		createdUserResp, err := fbc.SignUp(req.CustomerEmail, encodedRealmID)
+		if err != nil {
+			log.Println(err)
+			http.Error(w, "Could not create user", http.StatusInternalServerError)
+			return
+		}
+		err = s.CreateCustomer(claims.QBCompanyID, req.QBCustomerID, createdUserResp.LocalId)
+		if err != nil {
+			http.Error(w, "Could not create customer in DB", http.StatusInternalServerError)
+			// TODO: this is kinda faulty
+			a.DeleteUser(r.Context(), createdUserResp.LocalId)
+			return
+		}
+		emailSetting := auth.ActionCodeSettings{
+			URL: "https://backend-435201.firebaseapp.com",
+		}
+		// a.GetUser(r.Context(), uid.UID)
+		link, err := a.PasswordResetLinkWithSettings(r.Context(), req.CustomerEmail, &emailSetting)
+
+		// Create customer in DB
+		err = s.CreateCustomer(claims.QBCompanyID, customer.DisplayName, customer.PrimaryEmailAddr.Address, customer.BillAddr.Line1, customer.BillAddr.City, customer.BillAddr.CountrySubDivisionCode, customer.BillAddr.PostalCode, customer.BillAddr.Lat, customer.BillAddr.Long)
+		if err != nil {
+			http.Error(w, "Could not create customer", http.StatusInternalServerError)
+			return
+		}
+		response := response{Success: true}
+		encode(w, r, 200, response)
 	}
 }
 
