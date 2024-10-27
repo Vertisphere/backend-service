@@ -23,15 +23,29 @@ func addRoutes(
 	// FOR DEV ONLY
 	// mux.Handle("/", http.NotFoundHandler())
 
-	// We're creating a firebase user for franchiser not franchisee
-	mux.Handle("POST /qbLogin", LoginQuickbooks(fbc, qbc, auth, storage))
+	// THE FRANCHISER FRANCHISEE prefixes are not really necessary but keeping them for dev clarity purposes for now
 
-	mux.Handle("GET /qbCustomers", ListQBCustomers(qbc))
+	// We're creating a firebase user for franchiser not franchisee
+	mux.Handle("POST /franchiser/qbLogin", LoginQuickbooks(fbc, qbc, auth, storage))
+	mux.Handle("GET /franchiser/qbCustomer/{id}", GetQBCustomer(qbc, storage))
+	mux.Handle("GET /franchiser/qbCustomers", ListQBCustomers(qbc))
 
 	// We're creating a firebase user for franchisee
-	// mux.Handle("POST /customers", CreateCustomer(fbc, qbc, auth, storage))
+	mux.Handle("POST /franchiser/customers", CreateCustomer(fbc, qbc, auth, storage))
 
-	mux.Handle("/", ShowClaims())
+	// login for franchisee
+	mux.Handle("POST /franchisee/login", LoginCustomer(fbc, qbc, auth, storage))
+	mux.Handle("GET /franchisee/qbItems", ListQBItems(qbc))
+	// TODO add role management in these handlers
+	mux.Handle("POST /franchisee/qbInvoice", CreateQBInvoice(qbc))
+
+	mux.Handle("PATCH /franchiser/qbInvoice/{id}", ReviewQBInvoice(qbc))
+
+	// This should really be the same thing since we cane use the claims to determine the role
+	mux.Handle("GET /franchiser/qbInvoices", ListQBInvoices(qbc))
+	mux.Handle("GET /franchisee/qbInvoices", ListQBInvoicesCustomer(qbc))
+
+	// mux.Handle("/", ShowClaims())
 	// mux.Handle("POST /register", CreateUser(fbc))
 
 	// mux.Handle("POST /company", CreateCompany(fbc, qbc, storage))

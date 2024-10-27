@@ -67,6 +67,17 @@ func (s SQLStorage) IsFirebaseUser(companyID string) (string, error) {
 	}
 }
 
+func (s SQLStorage) IsFirebaseUserCustomer(customerID string) (bool, error) {
+	var isLinked bool
+	// query to see if id exists
+	query := "SELECT EXISTS(SELECT 1 FROM customer WHERE qb_customer_id = $1)"
+	err := s.db.QueryRow(query, customerID).Scan(&isLinked)
+	if err != nil {
+		return false, err
+	}
+	return isLinked, nil
+}
+
 // func (s SQLStorage) UpdateCompany(company domain.Company) error {
 // 	// Reflect on the company struct
 // 	v := reflect.ValueOf(company)
@@ -118,7 +129,7 @@ func (s SQLStorage) GetCompany(companyID string) (domain.Company, error) {
 	var firebaseID sql.NullString
 	query := `
 		SELECT qb_company_id, firebase_id, qb_auth_code, qb_bearer_token, 
-			   qb_bearer_token_expiry, qb_refresh_token, qb_refresh_token_expiry 
+			   qb_bearer_token_expiry, qb_refresh_token, qb_refresh_token_expiry, created_at
 		FROM company 
 		WHERE qb_company_id = $1
 	`
@@ -126,6 +137,7 @@ func (s SQLStorage) GetCompany(companyID string) (domain.Company, error) {
 		&company.QBCompanyID, &firebaseID, &company.QBAuthCode,
 		&company.QBBearerToken, &company.QBBearerTokenExpiry,
 		&company.QBRefreshToken, &company.QBRefreshTokenExpiry,
+		&company.CreatedAt,
 	)
 	if err != nil {
 		return domain.Company{}, err
@@ -153,6 +165,21 @@ func (s SQLStorage) CreateCustomer(companyID string, customerID string, firebase
 		return err
 	}
 	return nil
+}
+
+func (s SQLStorage) GetCustomerByFirebaseID(firebaseID string) (domain.Customer, error) {
+	var customer domain.Customer
+	domainQuery := "SELECT * FROM customer WHERE firebase_id = $1"
+	err := s.db.QueryRow(domainQuery, firebaseID).Scan(
+		&customer.QBCustomerID,
+		&customer.QBCompanyID,
+		&customer.FirebaseID,
+		&customer.CreatedAt,
+	)
+	if err != nil {
+		return customer, err
+	}
+	return customer, nil
 }
 
 // func (s SQLStorage) CreateFranchise(admin_account_id string, franchise domain.Franchise) error {

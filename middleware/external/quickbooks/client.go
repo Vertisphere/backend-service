@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"time"
@@ -119,6 +120,7 @@ func (c *Client) req(realmID string, method string, endpoint string, payloadData
 		}
 	}
 
+	log.Println(string(marshalledJson))
 	req, err := http.NewRequest(method, endpointUrl.String(), bytes.NewBuffer(marshalledJson))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %v", err)
@@ -168,3 +170,6 @@ func (c *Client) post(realmID string, endpoint string, payloadData interface{}, 
 func (c *Client) query(realmID string, query string, responseObject interface{}) error {
 	return c.get(realmID, "query", responseObject, map[string]string{"query": query})
 }
+
+// TODO add errors for 401 when qb access token expires
+// 401 {"warnings":null,"intuitObject":null,"fault":{"error":[{"message":"message=AuthenticationFailed; errorCode=003200; statusCode=401","detail":"Token expired: AB01730024136mqEofYN9fldzIcxH6lsAcqOYIbafE5z6ZdjPc","code":"3200","element":null}],"type":"AUTHENTICATION"},"report":null,"queryResponse":null,"batchItemResponse":[],"attachableResponse":[],"syncErrorResponse":null,"requestId":null,"time":1730024394085,"status":null,"cdcresponse":[]}

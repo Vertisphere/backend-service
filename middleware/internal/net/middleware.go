@@ -11,7 +11,7 @@ import (
 
 func verifyToken(c *auth.Client, h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/qbLogin" && r.Method == "POST" {
+		if r.URL.Path == "/franchiser/qbLogin" && r.Method == "POST" || r.URL.Path == "/franchisee/login" && r.Method == "POST" {
 			h.ServeHTTP(w, r)
 			return
 		}
@@ -36,6 +36,7 @@ func verifyToken(c *auth.Client, h http.Handler) http.Handler {
 		claims := domain.Claims{
 			IsFranchiser:  token.Claims["is_franchiser"].(bool),
 			QBCompanyID:   token.Claims["qb_company_id"].(string),
+			QBCustomerID:  token.Claims["qb_customer_id"].(string),
 			QBBearerToken: token.Claims["qb_bearer_token"].(string),
 			FirebaseID:    token.Claims["firebase_id"].(string),
 		}

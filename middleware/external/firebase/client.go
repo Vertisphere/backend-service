@@ -86,3 +86,37 @@ func (c *Client) SignInWithCustomToken(customTokenInternal string) (SignInWithCu
 	}
 	return resData, nil
 }
+
+// CreateUser creates a new user in Firebase.
+func (c *Client) SignInWithPassword(email string, password string) (SignInWithPasswordResponse, error) {
+	url := "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=" + c.apiKey
+	params := map[string]string{
+		"email":             email,
+		"password":          password,
+		"returnSecureToken": "true",
+	}
+
+	body, err := json.Marshal(params)
+	if err != nil {
+		log.Errorf("failed to marshal body: %v", err)
+		return SignInWithPasswordResponse{}, err
+	}
+
+	resp, err := http.Post(url, "application/json", bytes.NewBuffer(body))
+	if err != nil {
+		log.Errorf("firebase request failed: %v", err)
+		return SignInWithPasswordResponse{}, err
+	}
+
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return SignInWithPasswordResponse{}, fmt.Errorf("non 200 response code from Firebase %s", resp.Status)
+	}
+
+	var resData SignInWithPasswordResponse
+	if err := json.NewDecoder(resp.Body).Decode(&resData); err != nil {
+		return SignInWithPasswordResponse{}, err
+	}
+	return resData, nil
+}

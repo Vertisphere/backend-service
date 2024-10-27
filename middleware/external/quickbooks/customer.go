@@ -5,6 +5,7 @@ package quickbooks
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"gopkg.in/guregu/null.v4"
@@ -51,7 +52,7 @@ type Customer struct {
 }
 
 // FindCustomerById returns a customer with a given Id.
-func (c *Client) GetCustomerById(realmID, id string) (*Customer, error) {
+func (c *Client) GetCustomerById(realmID string, id string) (*Customer, error) {
 	var r struct {
 		Customer Customer
 		Time     Date
@@ -191,34 +192,31 @@ func (c *Client) QueryCustomers(realmID string, orderBy string, pageSize string,
 // UpdateCustomer updates the given Customer on the QuickBooks server,
 // returning the resulting Customer object. It's a sparse update, as not all QB
 // fields are present in our Customer object.
-// func (c *Client) UpdateCustomer(customer *Customer) (*Customer, error) {
-// 	if customer.Id == "" {
-// 		return nil, errors.New("missing customer id")
-// 	}
+func (c *Client) UpdateCustomer(realmID string, customer *Customer) (*Customer, error) {
+	if customer.Id == "" {
+		return nil, errors.New("missing customer id")
+	}
+	if customer.SyncToken == "" {
+		return nil, errors.New("missing customer sync token")
+	}
 
-// 	existingCustomer, err := c.FindCustomerById(customer.Id)
-// 	if err != nil {
-// 		return nil, fmt.Errorf("failed to find existing customer: %v", err)
-// 	}
+	payload := struct {
+		*Customer
+		Sparse bool `json:"sparse"`
+	}{
+		Customer: customer,
+		Sparse:   true,
+	}
 
-// 	customer.SyncToken = existingCustomer.SyncToken
+	var customerData struct {
+		Customer Customer
+		Time     Date
+	}
 
-// 	payload := struct {
-// 		*Customer
-// 		Sparse bool `json:"sparse"`
-// 	}{
-// 		Customer: customer,
-// 		Sparse:   true,
-// 	}
+	var err error
+	if err = c.post(realmID, "customer", payload, &customerData, nil); err != nil {
+		return nil, err
+	}
 
-// 	var customerData struct {
-// 		Customer Customer
-// 		Time     Date
-// 	}
-
-// 	if err = c.post("customer", payload, &customerData, nil); err != nil {
-// 		return nil, err
-// 	}
-
-// 	return &customerData.Customer, nil
-// }
+	return &customerData.Customer, nil
+}

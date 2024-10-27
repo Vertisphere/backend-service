@@ -10,4 +10,5 @@ type Company struct {
 	QBRefreshToken       string    `json:"refresh_token" db:"qb_refresh_token,omitempty"`
 	QBRefreshTokenExpiry time.Time `json:"refresh_token_expiry" db:"qb_refresh_token_expiry,omitempty"`
 	FirebaseID           string    `json:"firebase_id" db:"firebase_id,omitempty"`
+	CreatedAt            time.Time `json:"created_at" db:"created_at"`
 }
