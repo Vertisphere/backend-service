@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Processing OAuth...</title>
+</head>
+<body>
+    <div id="message">Processing login...</div>
+    <script>
+        async function handleOAuth() {
+            // Get code and realmId from URL parameters
+            const urlParams = new URLSearchParams(window.location.search);
+            const code = urlParams.get('code');
+            const realmId = urlParams.get('realmId');
+
+            if (code && realmId) {
+                try {
+                    const response = await fetch('http://localhost:8080/franchiser/qbLogin', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            auth_code: code,
+                            realm_id: realmId,
+                            use_cached_bearer: false
+                        })
+                    });
+
+                    if (response.ok) {
+                        const data = await response.json();
+                        // Store JWT in sessionStorage
+                        sessionStorage.setItem('jwt', data.token);
+                        document.getElementById('message').textContent = 'Login successful!';
+                        // sleep for 2 seconds
+                        window.setTimeout(() => {
+                            window.location.href = '/franchiser/customers';
+                        }, 2000);
+                        // Redirect to dashboard or home page
+                        // window.location.href = '/franchiser/dashboard';
+                    } else {
+                        throw new Error('Login failed');
+                    }
+                } catch (error) {
+                    document.getElementById('message').textContent = 'Error processing login: ' + error.message;
+                }
+            } else {
+                document.getElementById('message').textContent = 'Error: Missing required parameters';
+            }
+        }
+
+        // Execute when page loads
+        handleOAuth();
+    </script>
+</body>
+</html>

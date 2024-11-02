@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Items</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+
+        .page-layout {
+            display: flex;
+            gap: 20px;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        .main-content {
+            flex: 1;
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .cart-sidebar {
+            width: 300px;
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            height: fit-content;
+            position: sticky;
+            top: 20px;
+        }
+
+        .items-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+
+        .items-table th, 
+        .items-table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+
+        .items-table th {
+            background-color: #f8f9fa;
+            font-weight: bold;
+        }
+
+        .items-table tr:hover {
+            background-color: #f5f5f5;
+            cursor: pointer;
+        }
+
+        .selected {
+            background-color: #e3f2fd !important;
+        }
+
+        .cart-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px;
+            border-bottom: 1px solid #ddd;
+            margin-bottom: 10px;
+        }
+
+        .quantity-control {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .quantity-control button {
+            padding: 4px 8px;
+            background-color: #f0f0f0;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        .quantity-control span {
+            min-width: 20px;
+            text-align: center;
+        }
+
+        .remove-item {
+            color: #dc3545;
+            cursor: pointer;
+            padding: 4px 8px;
+            background: none;
+            border: none;
+        }
+
+        .submit-cart {
+            width: 100%;
+            padding: 12px;
+            background-color: #28a745;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-top: 20px;
+        }
+
+        .submit-cart:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px 25px;
+            border-radius: 4px;
+            color: white;
+            display: none;
+            z-index: 1000;
+            animation: slideIn 0.5s ease-out;
+        }
+
+        .notification.success {
+            background-color: #28a745;
+        }
+
+        .notification.error {
+            background-color: #dc3545;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        .cart-total {
+            margin-top: 20px;
+            padding-top: 10px;
+            border-top: 2px solid #ddd;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="page-layout">
+        <div class="main-content">
+            <h1>Items</h1>
+            <table class="items-table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Name</th>
+                        <th>SKU</th>
+                        <th>Unit Price</th>
+                        <th>Quantity Available</th>
+                    </tr>
+                </thead>
+                <tbody id="itemsTableBody">
+                    <!-- Items will be populated here -->
+                </tbody>
+            </table>
+        </div>
+
+        <div class="cart-sidebar">
+            <h2>Cart</h2>
+            <div id="cartItems">
+                <!-- Cart items will be populated here -->
+            </div>
+            <div class="cart-total">
+                Total: $<span id="cartTotal">0.00</span>
+            </div>
+            <button id="submitCart" class="submit-cart" onclick="submitCart()">
+                Create Invoice
+            </button>
+        </div>
+    </div>
+
+    <div id="notification" class="notification"></div>
+
+    <script>
+        let items = [];
+        let cart = new Map();
+
+        // Load cart from localStorage
+        function loadCart() {
+            const savedCart = localStorage.getItem('itemCart');
+            if (savedCart) {
+                cart = new Map(JSON.parse(savedCart));
+                updateCartDisplay();
+            }
+        }
+
+        // Save cart to localStorage
+        function saveCart() {
+            localStorage.setItem('itemCart', JSON.stringify([...cart]));
+            updateCartDisplay();
+        }
+
+        async function fetchItems() {
+            try {
+                const jwt = sessionStorage.getItem('jwt');
+                if (!jwt) {
+                    window.location.href = '/franchiser/login';
+                    return;
+                }
+
+                const response = await fetch(
+                    'http://localhost:8080/franchisee/qbItems?page_size=50&page_token=1&order_by=Id ASC',
+                    {
+                        headers: {
+                            'Authorization': `Bearer ${jwt}`
+                        }
+                    }
+                );
+
+                if (!response.ok) {
+                    throw new Error('Failed to fetch items');
+                }
+
+                const data = await response.json();
+                items = data.items;
+                displayItems();
+            } catch (error) {
+                console.error('Error:', error);
+                showNotification('Error fetching items', false);
+            }
+        }
+
+        function displayItems() {
+            const tableBody = document.getElementById('itemsTableBody');
+            tableBody.innerHTML = '';
+
+            items.forEach(item => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${item.Id}</td>
+                    <td>${item.Name}</td>
+                    <td>${item.Sku || 'N/A'}</td>
+                    <td>$${item.UnitPrice.toFixed(2)}</td>
+                    <td>${item.QtyOnHand}</td>
+                `;
+                row.onclick = () => toggleItemSelection(item);
+                if (cart.has(item.Id)) {
+                    row.classList.add('selected');
+                }
+                tableBody.appendChild(row);
+            });
+        }
+
+        function toggleItemSelection(item) {
+            if (cart.has(item.Id)) {
+                return; // If item is already in cart, don't add it again
+            }
+
+            cart.set(item.Id, {
+                item: {
+                    Id: item.Id,
+                    UnitPrice: item.UnitPrice,
+                    SalesTaxCodeRef: item.SalesTaxCodeRef || { value: "5" }
+                },
+                quantity: 1,
+                name: item.Name // Store name for display purposes
+            });
+
+            saveCart();
+            displayItems(); // Refresh table to show selection
+        }
+
+        function updateCartDisplay() {
+            const cartContainer = document.getElementById('cartItems');
+            cartContainer.innerHTML = '';
+            let total = 0;
+
+            cart.forEach((cartItem, itemId) => {
+                const itemTotal = cartItem.item.UnitPrice * cartItem.quantity;
+                total += itemTotal;
+
+                const itemElement = document.createElement('div');
+                itemElement.className = 'cart-item';
+                itemElement.innerHTML = `
+                    <div>
+                        <div>${cartItem.name}</div>
+                        <div>$${cartItem.item.UnitPrice.toFixed(2)} each</div>
+                    </div>
+                    <div class="quantity-control">
+                        <button onclick="updateQuantity('${itemId}', ${cartItem.quantity - 1})">-</button>
+                        <span>${cartItem.quantity}</span>
+                        <button onclick="updateQuantity('${itemId}', ${cartItem.quantity + 1})">+</button>
+                        <button class="remove-item" onclick="removeItem('${itemId}')">×</button>
+                    </div>
+                `;
+                cartContainer.appendChild(itemElement);
+            });
+
+            document.getElementById('cartTotal').textContent = total.toFixed(2);
+            document.getElementById('submitCart').disabled = cart.size === 0;
+        }
+
+        function updateQuantity(itemId, newQuantity) {
+            if (newQuantity <= 0) {
+                removeItem(itemId);
+                return;
+            }
+
+            const cartItem = cart.get(itemId);
+            const item = items.find(i => i.Id === itemId);
+            
+            if (newQuantity > item.QtyOnHand) {
+                showNotification('Not enough quantity available', false);
+                return;
+            }
+
+            cartItem.quantity = newQuantity;
+            saveCart();
+        }
+
+        function removeItem(itemId) {
+            cart.delete(itemId);
+            saveCart();
+            displayItems(); // Refresh table to remove selection
+        }
+
+        async function submitCart() {
+            try {
+                const jwt = sessionStorage.getItem('jwt');
+                const lines = [...cart.values()].map(({ item, quantity }) => ({
+                    item,
+                    quantity
+                }));
+
+                const response = await fetch('http://localhost:8080/franchisee/qbInvoice', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${jwt}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ lines })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to create invoice');
+                }
+
+                showNotification('Invoice created successfully', true);
+                cart.clear();
+                saveCart();
+                displayItems();
+            } catch (error) {
+                console.error('Error:', error);
+                showNotification('Error creating invoice', false);
+            }
+        }
+
+        function showNotification(message, isSuccess) {
+            const notification = document.getElementById('notification');
+            notification.textContent = message;
+            notification.className = `notification ${isSuccess ? 'success' : 'error'}`;
+            notification.style.display = 'block';
+
+            setTimeout(() => {
+                notification.style.display = 'none';
+            }, 3000);
+        }
+
+        // Initialize page
+        loadCart();
+        fetchItems();
+    </script>
+</body>
+</html>

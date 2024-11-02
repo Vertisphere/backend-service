@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Franchiser Login</title>
+    <style>
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            font-family: Arial, sans-serif;
+        }
+        .login-container {
+            text-align: center;
+            padding: 20px;
+        }
+        .login-button {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            background-color: #2CA01C;
+            color: white;
+            border: none;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <button class="login-button" onclick="loginWithQuickbooks()">Login with QuickBooks</button>
+    </div>
+    <script>
+        function loginWithQuickbooks() {
+            // Replace these with your actual QuickBooks OAuth details
+            const clientId = 'ABRZXEqL4DpCxHz4OhdiuKg0BXaKIYf4QfVgqLdzC3SngxVNWy';
+            const redirectUri = 'http://localhost:3000/franchiser/oauth';
+            const scope = 'com.intuit.quickbooks.accounting openid profile email phone';
+            const responseType = 'code';
+            const state = Math.random().toString(36).substring(7);
+            
+            const authUrl = `https://appcenter.intuit.com/connect/oauth2/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=${responseType}&scope=${scope}&state=${state}`;
+            
+            window.location.href = authUrl;
+        }
+    </script>
+</body>
+</html>
