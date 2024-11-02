@@ -109,6 +109,7 @@ func LoginQuickbooks(fbc *fb.Client, qbc *qb.Client, a *auth.Client, s *storage.
 				http.Error(w, "Could not get token", http.StatusInternalServerError)
 				return
 			}
+			log.Println(bearerToken)
 
 			err = s.UpsertCompany(req.RealmID, req.AuthCode, bearerToken.AccessToken, bearerToken.ExpiresIn, bearerToken.RefreshToken, bearerToken.XRefreshTokenExpiresIn)
 			if err != nil {
@@ -145,6 +146,7 @@ func LoginQuickbooks(fbc *fb.Client, qbc *qb.Client, a *auth.Client, s *storage.
 			}
 			firebaseID = createdUserResp.LocalId
 		}
+		log.Println(firebaseID)
 
 		encKey := config.LoadConfigs().JWEKey
 		rawKey, err := base64.StdEncoding.DecodeString(encKey)
@@ -167,6 +169,7 @@ func LoginQuickbooks(fbc *fb.Client, qbc *qb.Client, a *auth.Client, s *storage.
 			http.Error(w, "Could not serialize token", http.StatusInternalServerError)
 			return
 		}
+		log.Println(encryptedToken)
 		customClaims := domain.Claims{
 			QBCompanyID:   req.RealmID,
 			QBCustomerID:  "0",
@@ -177,7 +180,18 @@ func LoginQuickbooks(fbc *fb.Client, qbc *qb.Client, a *auth.Client, s *storage.
 			// IsAdmin
 		}
 		customTokenInternal, err := a.CustomTokenWithClaims(r.Context(), firebaseID, domain.ClaimsToMap(customClaims))
+		if err != nil {
+			log.Println(err)
+			http.Error(w, "Could not create custom token", http.StatusInternalServerError)
+			return
+		}
+		log.Println(customTokenInternal)
 		signInWithCustomTokenResp, err := fbc.SignInWithCustomToken(customTokenInternal)
+		if err != nil {
+			log.Println(err)
+			http.Error(w, "Could not sign in with custom token", http.StatusInternalServerError)
+			return
+		}
 
 		// FOR PURELY DEBUGGING PURPOSES
 		// decryptedObject, err := jose.ParseEncrypted(encryptedToken)
@@ -252,7 +266,9 @@ func CreateCustomer(fbc *fb.Client, qbc *qb.Client, a *auth.Client, s *storage.S
 	}
 
 	type response struct {
-		Success bool `json:"success"`
+		// This is sent in the email but will put this in for for dev testing
+		ResetLink string `json:"reset_link"`
+		Success   bool   `json:"success"`
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		// get claims from context
@@ -294,7 +310,8 @@ func CreateCustomer(fbc *fb.Client, qbc *qb.Client, a *auth.Client, s *storage.S
 			return
 		}
 		emailSetting := auth.ActionCodeSettings{
-			URL: "https://backend-435201.firebaseapp.com",
+			// URL: "https://backend-435201.firebaseapp.com",
+			URL: "http://localhost:3000/franchisee/login",
 		}
 		// a.GetUser(r.Context(), uid.UID)
 		link, err := a.PasswordResetLinkWithSettings(r.Context(), req.CustomerEmail, &emailSetting)
@@ -336,7 +353,7 @@ func CreateCustomer(fbc *fb.Client, qbc *qb.Client, a *auth.Client, s *storage.S
 			}
 		}
 
-		response := response{Success: true}
+		response := response{Success: true, ResetLink: link}
 		encode(w, r, 200, response)
 	}
 }
@@ -604,8 +621,6 @@ func ReviewQBInvoice(qbc *qb.Client) http.HandlerFunc {
 			// Send email and notification to customer
 			err = qbc.SendInvoice(claims.QBCompanyID, invoiceId, "")
 			if err != nil {
-				log.Println(qb.Customer{})
-				log.Println(qb.Invoice{})
 				log.Println(err)
 				http.Error(w, "Could not send invoice", http.StatusInternalServerError)
 				return
@@ -732,6 +747,35 @@ func GetQBCustomer(qbc *qb.Client, s *storage.SQLStorage) http.Handler {
 		}
 
 		resp := response{Customer: *customer, IsLinked: isLinked}
+		encode(w, r, http.StatusOK, resp)
+	})
+}
+
+func GetQBInvoice(qbc *qb.Client) http.Handler {
+	type response struct {
+		Invoice qb.Invoice `json:"invoice"`
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// get claims from context
+		claims := r.Context().Value("claims").(domain.Claims)
+		token, err := decryptJWE(claims.QBBearerToken)
+		if err != nil {
+			http.Error(w, "Could not decrypt QB token", http.StatusUnauthorized)
+			return
+		}
+		qbc.SetClient(qb.BearerToken{AccessToken: string(token)})
+
+		invoiceId := r.PathValue("id")
+		if invoiceId == "" {
+			http.Error(w, "No id in url", http.StatusBadRequest)
+			return
+		}
+		invoice, err := qbc.FindInvoiceById(claims.QBCompanyID, invoiceId)
+		if err != nil {
+			http.Error(w, "Could not get invoice", http.StatusInternalServerError)
+			return
+		}
+		resp := response{Invoice: *invoice}
 		encode(w, r, http.StatusOK, resp)
 	})
 }

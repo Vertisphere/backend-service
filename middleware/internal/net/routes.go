@@ -39,6 +39,7 @@ func addRoutes(
 	// TODO add role management in these handlers
 	mux.Handle("POST /franchisee/qbInvoice", CreateQBInvoice(qbc))
 
+	mux.Handle("GET /franchiser/qbInvoice/{id}", GetQBInvoice(qbc))
 	mux.Handle("PATCH /franchiser/qbInvoice/{id}", ReviewQBInvoice(qbc))
 
 	// This should really be the same thing since we cane use the claims to determine the role

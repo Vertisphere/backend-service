@@ -28,6 +28,8 @@ func NewServer(
 		quickbooksClient,
 	)
 	var handler http.Handler = mux
+	// The later the middleware is added the earlier it is executed
 	handler = verifyToken(auth, handler)
+	handler = corsMiddleware(handler)
 	return handler
 }
