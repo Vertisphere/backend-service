@@ -4,9 +4,14 @@
 package quickbooks
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"net/url"
 )
 
 // Invoice represents a QuickBooks Invoice object.
@@ -300,16 +305,59 @@ func (c *Client) QueryInvoicesCustomer(realmID string, orderBy string, pageSize 
 				DocNumber   string        `json:"DocNumber,omitempty"`
 				TxnDate     Date          `json:"TxnDate,omitempty"`
 				TotalAmt    json.Number   `json:"TotalAmt,omitempty"`
-			} `json:"Invoices"`
+			} `json:"Invoice"`
 			StartPosition int
 			MaxResults    int
 		}
 	}
 
 	query := fmt.Sprintf("SELECT * FROM Invoice WHERE DocNumber LIKE 'P%%' AND CustomerRef='%s' ORDER BY %s MAXRESULTS %s STARTPOSITION %s", customerId, orderBy, pageSize, pageToken)
+	log.Println(query)
 	if err := c.query(realmID, query, &resp); err != nil {
 		return nil, err
 	}
 
 	return resp.QueryResponse.Invoices, nil
+}
+
+func (c *Client) GetInvoicePDF(realmID string, invoiceId string) ([]byte, error) {
+	if c.throttled {
+		return nil, errors.New("waiting for rate limit")
+	}
+	endpointUrl, err := url.Parse(string(c.endpoint) + "/v3/company/" + realmID + "/")
+	if err != nil {
+		return nil, errors.New("failed to parse API endpoint")
+	}
+
+	endpointUrl.Path += "invoice/" + invoiceId + "/pdf"
+
+	urlValues := url.Values{}
+	urlValues.Set("minorversion", c.minorVersion)
+	urlValues.Encode()
+	endpointUrl.RawQuery = urlValues.Encode()
+
+	var marshalledJson []byte
+
+	req, err := http.NewRequest("GET", endpointUrl.String(), bytes.NewBuffer(marshalledJson))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %v", err)
+	}
+
+	// req.Header.Add("Accept", "application/json")
+	req.Header.Add("Content-Type", "application/pdf")
+
+	log.Println(req)
+	resp, err := c.Client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to make request: %v", err)
+	}
+
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, errors.New("failed to get pdf")
+	}
+
+	// Take "%PDF-1.4\r\n...\r\n%%EOF" object and return it as content-type: application/pdf
+	return io.ReadAll(resp.Body)
 }

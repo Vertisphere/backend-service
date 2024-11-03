@@ -707,6 +707,7 @@ func ListQBInvoicesCustomer(qbc *qb.Client) http.HandlerFunc {
 		}
 
 		invoices, err := qbc.QueryInvoicesCustomer(claims.QBCompanyID, orderBy, pageSize, pageToken, claims.QBCustomerID)
+		log.Println(invoices)
 		if err != nil {
 			http.Error(w, "Could not get invoices", http.StatusInternalServerError)
 			return
@@ -777,6 +778,35 @@ func GetQBInvoice(qbc *qb.Client) http.Handler {
 		}
 		resp := response{Invoice: *invoice}
 		encode(w, r, http.StatusOK, resp)
+	})
+}
+
+func GetQBInvoicePDF(qbc *qb.Client) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// get claims from context
+		claims := r.Context().Value("claims").(domain.Claims)
+		token, err := decryptJWE(claims.QBBearerToken)
+		if err != nil {
+			http.Error(w, "Could not decrypt QB token", http.StatusUnauthorized)
+			return
+		}
+		qbc.SetClient(qb.BearerToken{AccessToken: string(token)})
+
+		invoiceId := r.PathValue("id")
+		if invoiceId == "" {
+			http.Error(w, "No id in url", http.StatusBadRequest)
+			return
+		}
+		// Get PDF
+		pdf, err := qbc.GetInvoicePDF(claims.QBCompanyID, invoiceId)
+		if err != nil {
+			log.Println(err)
+			http.Error(w, "Could not get PDF", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/pdf")
+		w.Header().Set("Content-Disposition", "attachment; filename=invoice.pdf")
+		w.Write(pdf)
 	})
 }
 

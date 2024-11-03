@@ -20,7 +20,10 @@ import (
 
 func main() {
 	ctx := context.Background()
-
+	err := config.LoadEnv()
+	if err != nil {
+		log.Fatalf("error loading env: %v\n", err)
+	}
 	c := config.LoadConfigs()
 
 	app, err := firebase.NewApp(ctx, nil)

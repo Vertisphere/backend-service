@@ -46,6 +46,8 @@ func addRoutes(
 	mux.Handle("GET /franchiser/qbInvoices", ListQBInvoices(qbc))
 	mux.Handle("GET /franchisee/qbInvoices", ListQBInvoicesCustomer(qbc))
 
+	mux.Handle("GET /franchiser/qbInvoicePDF/{id}", GetQBInvoicePDF(qbc))
+
 	// mux.Handle("/", ShowClaims())
 	// mux.Handle("POST /register", CreateUser(fbc))
 

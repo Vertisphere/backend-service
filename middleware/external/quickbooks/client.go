@@ -129,6 +129,7 @@ func (c *Client) req(realmID string, method string, endpoint string, payloadData
 	req.Header.Add("Accept", "application/json")
 	req.Header.Add("Content-Type", "application/json")
 
+	log.Println(req)
 	resp, err := c.Client.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to make request: %v", err)

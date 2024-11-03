@@ -1,0 +1,27 @@
+services:  
+  db:
+    build:
+      context: ./database
+      dockerfile: Dockerfile.local
+    image: pgdb:latest
+    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
+    # Disable so ports only can be accessed by api
+    ports:
+      - 5432:5432
+  api:
+    build:
+      context: ./middleware
+      dockerfile: Dockerfile.local
+    image: api:latest
+    network_mode: "host"
+    command: ["./api"]
+    # environment:
+      # - COLOR_LOGS_ENABLED=true 
+    ports:
+      - 8080:8080
+    volumes:
+      - .env:/app/.env
+      - ./service_account.json:/app/service_account.json
+# networks:
+#   my-network:
+#     driver: bridge

@@ -40,23 +40,20 @@ RUN go mod download
 
 # Copy the rest of the application code
 COPY . .
-COPY service_account.json /build/service_account.json
 
 # Build the Go app
 RUN CGO_ENABLED=0 GOOS=linux go build -o api cmd/api/main.go
 
 
 # Use a lightweight image for the final container
-FROM gcr.io/distroless/base-debian11 AS release
+# FROM gcr.io/distroless/base-debian11 AS release
+FROM alpine:latest AS release
 
 
 WORKDIR /app
 # WORKDIR /app
 # Copy the compiled Go binary from the builder
 COPY --from=build /app/api /app/api
-COPY --from=build /app/service_account.json /app/service_account.json
-ENV PORT=8080
-ENV GOOGLE_APPLICATION_CREDENTIALS=service_account.json
 # Expose the port on which the app will run
 EXPOSE 8080
 
