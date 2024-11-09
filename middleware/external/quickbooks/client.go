@@ -51,6 +51,7 @@ func NewClient(clientID, clientSecret, redirectURI string, isProduction bool, mi
 	if err != nil {
 		return nil, err
 	}
+	log.Println(client.endpoint)
 	return &client, nil
 }
 

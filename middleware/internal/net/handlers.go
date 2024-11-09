@@ -53,8 +53,22 @@ import (
 
 func ShowClaims() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		claims := r.Context().Value("claims").(domain.Claims)
-		log.Println(claims)
+		c := config.LoadConfigs()
+		log.Println("JWEKey:", c.JWEKey)
+		log.Println("PORT:", c.Port)
+		log.Println("DB_HOST:", c.DB.Host)
+		log.Println("DB_USER:", c.DB.User)
+		log.Println("DB_PASS:", c.DB.Password)
+		log.Println("DB_NAME:", c.DB.Name)
+		log.Println("QUICKBOOKS_CLIENT_ID:", c.Quickbooks.ClientID)
+		log.Println("QUICKBOOKS_REDIRECT_URI:", c.Quickbooks.RedirectURI)
+		log.Println("QUICKBOOKS_IS_PRODUCTION:", c.Quickbooks.IsProduction)
+		log.Println("QUICKBOOKS_MINOR_VERSION:", c.Quickbooks.MinorVersion)
+		log.Println("QUICKBOOKS_CLIENT_SECRET:", c.Quickbooks.ClientSecret)
+		log.Println("FIREBASE KEY:", c.Firebase.APIKey)
+		log.Println("JWE_KEY:", c.JWEKey)
+		// claims := r.Context().Value("claims").(domain.Claims)
+		// log.Println(claims)
 	}
 }
 
@@ -111,6 +125,7 @@ func LoginQuickbooks(fbc *fb.Client, qbc *qb.Client, a *auth.Client, s *storage.
 			}
 			log.Println(bearerToken)
 
+			// TODO: return a transaction here that we can rollback if something goes wrong
 			err = s.UpsertCompany(req.RealmID, req.AuthCode, bearerToken.AccessToken, bearerToken.ExpiresIn, bearerToken.RefreshToken, bearerToken.XRefreshTokenExpiresIn)
 			if err != nil {
 				log.Println(err)
@@ -121,12 +136,14 @@ func LoginQuickbooks(fbc *fb.Client, qbc *qb.Client, a *auth.Client, s *storage.
 		qbc.SetClient(*bearerToken)
 		userInfo, err := qbc.GetUserInfo()
 		if err != nil {
+			// TODO rollback
 			log.Println(err)
 			http.Error(w, "Could not get user info", http.StatusInternalServerError)
 			return
 		}
 		firebaseID, err := s.IsFirebaseUser(req.RealmID)
 		if err != nil {
+			// TODO rollback
 			http.Error(w, "Could not check if user exists", http.StatusInternalServerError)
 			return
 		}
@@ -135,12 +152,14 @@ func LoginQuickbooks(fbc *fb.Client, qbc *qb.Client, a *auth.Client, s *storage.
 			encodedRealmID := base64.StdEncoding.EncodeToString([]byte(req.RealmID))
 			createdUserResp, err := fbc.SignUp(userInfo.Email, encodedRealmID)
 			if err != nil {
+				// TODO rollback transaction and delete firebase uesr
 				log.Println(err)
 				http.Error(w, "Could not create user", http.StatusInternalServerError)
 				return
 			}
 			err = s.SetCompanyFirebaseID(req.RealmID, createdUserResp.LocalId)
 			if err != nil {
+				// TODO rollback transaction and delete firebase user
 				http.Error(w, "Could not link firebase ID of new user to company", http.StatusInternalServerError)
 				return
 			}
@@ -151,21 +170,25 @@ func LoginQuickbooks(fbc *fb.Client, qbc *qb.Client, a *auth.Client, s *storage.
 		encKey := config.LoadConfigs().JWEKey
 		rawKey, err := base64.StdEncoding.DecodeString(encKey)
 		if err != nil {
+			// rollback
 			log.Fatalf("Failed to decode Base64 key: %v", err)
 		}
 		encrypter, err := jose.NewEncrypter(jose.A256GCM, jose.Recipient{Algorithm: jose.DIRECT, Key: rawKey}, nil)
 		if err != nil {
+			// rollback
 			log.Println(err)
 			http.Error(w, "Could not create encrypter", http.StatusInternalServerError)
 			return
 		}
 		object, err := encrypter.Encrypt([]byte(bearerToken.AccessToken))
 		if err != nil {
+			// rollback
 			http.Error(w, "Could not encrypt token", http.StatusInternalServerError)
 			return
 		}
 		encryptedToken, err := object.CompactSerialize()
 		if err != nil {
+			// rollback
 			http.Error(w, "Could not serialize token", http.StatusInternalServerError)
 			return
 		}
@@ -204,6 +227,7 @@ func LoginQuickbooks(fbc *fb.Client, qbc *qb.Client, a *auth.Client, s *storage.
 		// }
 		// log.Println(string(decrypted))
 
+		// TODO return name for intro
 		response := response{
 			Token:   signInWithCustomTokenResp.IdToken,
 			Success: true}
@@ -376,6 +400,7 @@ func LoginCustomer(fbc *fb.Client, qbc *qb.Client, a *auth.Client, s *storage.SQ
 
 		signInWithPasswordResponse, err := fbc.SignInWithPassword(req.Email, req.Password)
 		if err != nil {
+			log.Println(err)
 			http.Error(w, "Could not sign in", http.StatusInternalServerError)
 			return
 		}
@@ -549,7 +574,7 @@ func CreateQBInvoice(qbc *qb.Client) http.HandlerFunc {
 			// BillEmail: qb.EmailAddress{Address: },
 		}
 		qbc.CreateInvoice(claims.QBCompanyID, invoice)
-		// add twilio sms messaging
+		// TODO: add twilio sms messaging
 		resp := response{Success: true}
 		encode(w, r, http.StatusOK, resp)
 	}
@@ -736,11 +761,14 @@ func GetQBCustomer(qbc *qb.Client, s *storage.SQLStorage) http.Handler {
 			http.Error(w, "No id in url", http.StatusBadRequest)
 			return
 		}
+		// profile this call
+		now := time.Now()
 		customer, err := qbc.GetCustomerById(claims.QBCompanyID, customerId)
 		if err != nil {
 			http.Error(w, "Could not get customer", http.StatusInternalServerError)
 			return
 		}
+		log.Println(time.Since(now))
 		isLinked, err := s.IsFirebaseUserCustomer(customerId)
 		if err != nil {
 			http.Error(w, "Could not check if firebase user linked to qb customer", http.StatusInternalServerError)

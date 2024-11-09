@@ -1,11 +1,18 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
+	"log"
+	"net"
+	"os"
 
 	"github.com/Vertisphere/backend-service/internal/domain"
-	_ "github.com/lib/pq"
+
+	"cloud.google.com/go/cloudsqlconn"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 )
 
 // SQLStorage is a wrapper for database operations
@@ -14,14 +21,54 @@ type SQLStorage struct {
 }
 
 // Init kicks off the database connector
-func (s *SQLStorage) Init(user, password, host, name string) error {
+func (s *SQLStorage) Init(user, password, host, name string, usePrivate bool) error {
 	fmt.Printf("Initializing database with user: %s, host: %s\n", user, host)
-	deebz, err := sql.Open("postgres", fmt.Sprintf("postgres://%s:%s@%s/%s?sslmode=disable", user, password, host, name))
-	if err != nil {
-		return err
+	var dbPool *sql.DB
+	var err error
+	if password == "" {
+		d, err := cloudsqlconn.NewDialer(context.Background(), cloudsqlconn.WithIAMAuthN())
+		if err != nil {
+			return fmt.Errorf("cloudsqlconn.NewDialer: %w", err)
+		}
+		var opts []cloudsqlconn.DialOption
+		// This is hardcoded to true for now. Not sure why we'll ever stop using vpc but if we do, we can change this
+		if os.Getenv("PRIVATE_IP") != "" {
+			opts = append(opts, cloudsqlconn.WithPrivateIP())
+		}
+
+		dsn := fmt.Sprintf("user=%s database=%s", user, name)
+		config, err := pgx.ParseConfig(dsn)
+		if err != nil {
+			return err
+		}
+
+		// host is like 'project:region:instance'
+		config.DialFunc = func(ctx context.Context, network, instance string) (net.Conn, error) {
+			return d.Dial(ctx, host, opts...)
+		}
+		dbURI := stdlib.RegisterConnConfig(config)
+
+		log.Printf("Connecting to database: %s\n", dbURI)
+
+		dbPool, err = sql.Open("pgx", dbURI)
+		if err != nil {
+			return fmt.Errorf("sql.Open: %w", err)
+		}
+		// test connection
+		err = dbPool.Ping()
+		if err != nil {
+			return err
+		}
+		log.Println("DB Ping success!")
+	} else {
+		// I know this isn't optimal but its just for dev
+		dbPool, err = sql.Open("pgx", fmt.Sprintf("postgres://%s:%s@%s/%s?sslmode=disable", user, password, host, name))
+		if err != nil {
+			return err
+		}
 	}
 	// Assign the database connection to s.db
-	s.db = deebz
+	s.db = dbPool
 	return nil
 }
 

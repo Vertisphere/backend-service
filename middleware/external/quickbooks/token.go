@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"net/url"
 
@@ -69,9 +70,10 @@ func (c *Client) RetrieveBearerToken(authorizationCode string) (*BearerToken, er
 	urlValues.Set("grant_type", "authorization_code")
 	urlValues.Set("code", authorizationCode)
 	urlValues.Set("redirect_uri", c.redirectURI)
-	urlValues.Set("client_id", c.clientID)
-	urlValues.Set("client_secret", c.clientSecret)
+	// urlValues.Set("client_id", c.clientID)
+	// urlValues.Set("client_secret", c.clientSecret)
 
+	log.Println("urlValues", urlValues)
 	req, err := http.NewRequest("POST", c.discoveryAPI.TokenEndpoint, bytes.NewBufferString(urlValues.Encode()))
 	if err != nil {
 		return nil, err
@@ -79,6 +81,7 @@ func (c *Client) RetrieveBearerToken(authorizationCode string) (*BearerToken, er
 
 	req.Header.Set("Accept", "*/*")
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", "Basic "+basicAuth(c))
 
 	// Use http.DefaultClient instead of creating a new client
 	// Log the request in a curl-like format

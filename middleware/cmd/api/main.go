@@ -42,17 +42,30 @@ func main() {
 	} else {
 		log.Println("Not using cache")
 		log.Printf("User: %s, Host: %s, Name: %s", c.DB.User, c.DB.Host, c.DB.Name)
-		if err := store.Init(c.DB.User, c.DB.Password, c.DB.Host, c.DB.Name); err != nil {
-			log.Fatalf("error initializing storage: %v\n", err)
+		if c.Env == "prod" {
+			log.Println("Using prod db")
+			if err := store.Init(c.DB.User, c.DB.Password, c.DB.Host, c.DB.Name, true); err != nil {
+				log.Fatalf("error initializing storage: %v\n", err)
+			}
+		} else {
+			if err := store.Init(c.DB.User, c.DB.Password, c.DB.Host, c.DB.Name, true); err != nil {
+				log.Fatalf("error initializing storage: %v\n", err)
+			}
 		}
 	}
 	defer store.Close()
 
 	// firebase client
 	firebaseClient, err := fb.NewClient(c.Firebase.APIKey)
+	if err != nil {
+		log.Fatalf("error initializing firebase client: %v\n", err)
+	}
 
 	// quickbooksClient
 	quickbooksClient, err := qb.NewClient(c.Quickbooks.ClientID, c.Quickbooks.ClientSecret, c.Quickbooks.RedirectURI, c.Quickbooks.IsProduction, c.Quickbooks.MinorVersion)
+	if err != nil {
+		log.Fatalf("error initializing quickbooks client: %v\n", err)
+	}
 
 	srv := mynet.NewServer(
 		ctx,

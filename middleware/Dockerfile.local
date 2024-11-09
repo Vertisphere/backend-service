@@ -1,61 +1,15 @@
-# # For local testing
-# FROM golang:1.22.2-alpine3.19
-
-# COPY build/api /go
-
-# # add service account keys to the container
-# COPY service_account.json /go
-# # set env to point to the service account keys
-# EXPOSE 8080
-# # # Use the official Golang image as the builder
-# # FROM golang:1.22.2-bullseye AS build
-
-# # Set the working directory
-# WORKDIR /app
-
-# # Commented out since vendor
-# # Copy the Go modules files and download the dependencies
-# COPY go.mod go.sum ./
-# RUN go mod download
-
-# # Copy the rest of the application code
-# COPY . .
-
-# # Build the Go app
-# RUN CGO_ENABLED=0 GOOS=linux go build -o api cmd/api/main.go
-
-
-
-
-# Use the official Golang image as the builder
 FROM golang:1.22.2-bullseye AS build
 
-# Set the working directory
 WORKDIR /app
-
-# Commented out since vendor
-# Copy the Go modules files and download the dependencies
 COPY go.mod go.sum ./
 RUN go mod download
-
-# Copy the rest of the application code
 COPY . .
-
-# Build the Go app
 RUN CGO_ENABLED=0 GOOS=linux go build -o api cmd/api/main.go
 
-
-# Use a lightweight image for the final container
-# FROM gcr.io/distroless/base-debian11 AS release
 FROM alpine:latest AS release
 
-
 WORKDIR /app
-# WORKDIR /app
-# Copy the compiled Go binary from the builder
 COPY --from=build /app/api /app/api
-# Expose the port on which the app will run
 EXPOSE 8080
 
-# Command to run the application
 CMD ["./api"]

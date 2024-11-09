@@ -44,14 +44,7 @@ tasks:
   #     - docker-slim build --http-probe my/backend
   #     # - ...
   #     # then enter
-  # docker-build-prod-latest:
-  #   desc: "builds slim prod docker image"
-  #   cmds:
-  #   - docker build --platform=linux/amd64 . -t gcr.io/backend-435201/backend:latest         
-  #   - docker push gcr.io/backend-435201/backend:latest 
-  #   # - docker tag gcr.io/backend-435201/backend:latest gcr.io/backend-435201/backend:latest
-  #     # - slim build --http-probe --continue-after --image-build-arch=linux/amd64 backend:v3
-  #     # - slim build --http-probe --continue-after backend:v3
+
   # get-cloud-run-creds:
   #   desc: "get cloud run credentials for api cloud run service account"
   #   cmds:
@@ -77,3 +70,17 @@ tasks:
   #     - task rm
   #     - task build
   #     - task run
+  docker-build-prod-latest:
+    desc: "builds slim prod docker image"
+    cmds:
+    - docker build --platform=linux/amd64 . -t gcr.io/backend-435201/backend:latest         
+    - docker push gcr.io/backend-435201/backend:latest 
+
+  docker-build-prod-latest:
+    desc: "builds slim prod docker image"
+    cmds:
+    - docker build --platform=linux/amd64 middleware -t gcr.io/backend-435201/backend:latest         
+    - docker push gcr.io/backend-435201/backend:latest 
+    # - docker tag gcr.io/backend-435201/backend:latest gcr.io/backend-435201/backend:latest
+      # - slim build --http-probe --continue-after --image-build-arch=linux/amd64 backend:v3
+      # - slim build --http-probe --continue-after backend:v3

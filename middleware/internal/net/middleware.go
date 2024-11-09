@@ -11,7 +11,7 @@ import (
 
 func verifyToken(c *auth.Client, h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/franchiser/qbLogin" && r.Method == "POST" || r.URL.Path == "/franchisee/login" && r.Method == "POST" {
+		if r.URL.Path == "/franchiser/qbLogin" && r.Method == "POST" || r.URL.Path == "/franchisee/login" && r.Method == "POST" || r.URL.Path == "/" && r.Method == "GET" {
 			h.ServeHTTP(w, r)
 			return
 		}
