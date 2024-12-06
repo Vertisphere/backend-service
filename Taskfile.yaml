@@ -76,11 +76,17 @@ tasks:
     - docker build --platform=linux/amd64 . -t gcr.io/backend-435201/backend:latest         
     - docker push gcr.io/backend-435201/backend:latest 
 
-  docker-build-prod-latest:
-    desc: "builds slim prod docker image"
+  # docker-build-prod-latest:
+  #   desc: "builds slim prod docker image"
+  #   cmds:
+  #   - docker build --platform=linux/amd64 middleware -t northamerica-northeast2-docker.pkg.dev/ordrport-prod/ordrport-prod-registry/digest:latest         
+  #   - docker push northamerica-northeast2-docker.pkg.dev/ordrport-prod/ordrport-prod-registry/digest:latest 
+
+  docker-build-stage-latest:
+    desc: "builds slim stage docker image"
     cmds:
-    - docker build --platform=linux/amd64 middleware -t gcr.io/backend-435201/backend:latest         
-    - docker push gcr.io/backend-435201/backend:latest 
+      - docker build --platform=linux/amd64 middleware -t gcr.io/backend-435201/backend:latest         
+      - docker push gcr.io/backend-435201/backend:latest 
     # - docker tag gcr.io/backend-435201/backend:latest gcr.io/backend-435201/backend:latest
       # - slim build --http-probe --continue-after --image-build-arch=linux/amd64 backend:v3
       # - slim build --http-probe --continue-after backend:v3

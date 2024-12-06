@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html>
+
 <head>
     <title>Items</title>
     <style>
@@ -15,7 +16,7 @@
             max-width: 1400px;
             margin: 0 auto;
         }
-        
+
         .main-content {
             flex: 1;
             background-color: white;
@@ -41,7 +42,7 @@
             margin-top: 20px;
         }
 
-        .items-table th, 
+        .items-table th,
         .items-table td {
             padding: 12px;
             text-align: left;
@@ -139,6 +140,7 @@
                 transform: translateX(100%);
                 opacity: 0;
             }
+
             to {
                 transform: translateX(0);
                 opacity: 1;
@@ -153,6 +155,7 @@
         }
     </style>
 </head>
+
 <body>
     <div class="page-layout">
         <div class="main-content">
@@ -182,7 +185,7 @@
                 Total: $<span id="cartTotal">0.00</span>
             </div>
             <button id="submitCart" class="submit-cart" onclick="submitCart()">
-                Create Invoice
+                Create Order
             </button>
         </div>
     </div>
@@ -217,7 +220,7 @@
                 }
 
                 const response = await fetch(
-                    'http://localhost:8080/franchisee/qbItems?page_size=50&page_token=1&order_by=Id ASC',
+                    'http://localhost:8080/qbItems?page_size=50&page_token=1&order_by=Id ASC',
                     {
                         headers: {
                             'Authorization': `Bearer ${jwt}`
@@ -264,11 +267,12 @@
                 return; // If item is already in cart, don't add it again
             }
 
+            // Make sure we have the correct SalesTaxCodeRef structure
             cart.set(item.Id, {
                 item: {
                     Id: item.Id,
                     UnitPrice: item.UnitPrice,
-                    SalesTaxCodeRef: item.SalesTaxCodeRef || { value: "5" }
+                    SalesTaxCodeRef: { value: "5" } // Use item's tax code or default to "5"
                 },
                 quantity: 1,
                 name: item.Name // Store name for display purposes
@@ -316,7 +320,7 @@
 
             const cartItem = cart.get(itemId);
             const item = items.find(i => i.Id === itemId);
-            
+
             if (newQuantity > item.QtyOnHand) {
                 showNotification('Not enough quantity available', false);
                 return;
@@ -335,22 +339,33 @@
         async function submitCart() {
             try {
                 const jwt = sessionStorage.getItem('jwt');
+
+                // Transform cart items into the correct format
                 const lines = [...cart.values()].map(({ item, quantity }) => ({
-                    item,
+                    item: {
+                        Id: item.Id,
+                        UnitPrice: item.UnitPrice,
+                        SalesTaxCodeRef: item.SalesTaxCodeRef
+                    },
                     quantity
                 }));
 
-                const response = await fetch('http://localhost:8080/franchisee/qbInvoice', {
+                const payload = { lines };
+
+                console.log('Submitting payload:', payload); // For debugging
+
+                const response = await fetch('http://localhost:8080/qbInvoice', {
                     method: 'POST',
                     headers: {
                         'Authorization': `Bearer ${jwt}`,
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ lines })
+                    body: JSON.stringify(payload)
                 });
 
                 if (!response.ok) {
-                    throw new Error('Failed to create invoice');
+                    const errorData = await response.json();
+                    throw new Error(errorData.message || 'Failed to create invoice');
                 }
 
                 showNotification('Invoice created successfully', true);
@@ -359,7 +374,7 @@
                 displayItems();
             } catch (error) {
                 console.error('Error:', error);
-                showNotification('Error creating invoice', false);
+                showNotification('Error creating invoice: ' + error.message, false);
             }
         }
 
@@ -379,4 +394,5 @@
         fetchItems();
     </script>
 </body>
+
 </html>

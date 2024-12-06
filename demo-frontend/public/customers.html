@@ -204,12 +204,66 @@
             margin: 20px 0;
             border-top: 1px solid #ddd;
         }
+        .search-controls {
+            margin-bottom: 20px;
+        }
+
+        .search-input {
+            width: 300px;
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            margin-right: 10px;
+        }
+
+        .search-input:focus {
+            outline: none;
+            border-color: #007bff;
+            box-shadow: 0 0 0 2px rgba(0,123,255,0.1);
+        }
+
+        /* Clear search button */
+        .clear-search {
+            padding: 8px 12px;
+            background-color: #6c757d;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            display: none; /* Hidden by default */
+        }
+
+        .clear-search:hover {
+            background-color: #5a6268;
+        }
+
+        .search-container {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        /* Rest of your existing styles remain the same */
     </style>
 </head>
 <body>
     <div class="container">
         <h1>Customers</h1>
         
+        <div class="search-controls">
+            <div class="search-container">
+                <input 
+                    type="text" 
+                    id="searchInput" 
+                    class="search-input" 
+                    placeholder="Search customers..."
+                    autocomplete="off"
+                >
+                <button id="clearSearch" class="clear-search">Clear</button>
+            </div>
+        </div>
         <div class="controls">
             <div class="page-size-control">
                 <label for="pageSize">Rows per page:</label>
@@ -293,6 +347,45 @@
             fetchCustomers();
         }
 
+        let searchTimeout;
+        let currentSearchQuery = '';
+
+        // Add this new function for search handling
+        function handleSearch(event) {
+            const searchQuery = event.target.value.trim();
+            const clearButton = document.getElementById('clearSearch');
+            
+            // Show/hide clear button based on search query
+            clearButton.style.display = searchQuery ? 'block' : 'none';
+
+            // Clear the existing timeout
+            if (searchTimeout) {
+                clearTimeout(searchTimeout);
+            }
+
+            // Set a new timeout to delay the API call
+            searchTimeout = setTimeout(() => {
+                if (currentSearchQuery !== searchQuery) {
+                    currentSearchQuery = searchQuery;
+                    currentPage = 1; // Reset to first page when searching
+                    fetchCustomers();
+                }
+            }, 300); // 300ms delay
+        }
+
+        // Add clear search function
+        function clearSearch() {
+            const searchInput = document.getElementById('searchInput');
+            const clearButton = document.getElementById('clearSearch');
+            
+            searchInput.value = '';
+            clearButton.style.display = 'none';
+            currentSearchQuery = '';
+            currentPage = 1;
+            fetchCustomers();
+        }
+
+        // Modify your fetchCustomers function to include search
         async function fetchCustomers() {
             try {
                 const jwt = sessionStorage.getItem('jwt');
@@ -301,14 +394,17 @@
                     return;
                 }
 
-                const response = await fetch(
-                    `http://localhost:8080/franchiser/qbCustomers?page_size=${pageSize}&page_token=${currentPage}&order_by=GivenName desc`,
-                    {
-                        headers: {
-                            'Authorization': `Bearer ${jwt}`
-                        }
+                // Build URL with search query if it exists
+                let url = `http://localhost:8080/qbCustomers?page_size=${pageSize}&page_token=${currentPage}&order_by=GivenName desc`;
+                if (currentSearchQuery) {
+                    url += `&query=${encodeURIComponent(currentSearchQuery)}`;
+                }
+
+                const response = await fetch(url, {
+                    headers: {
+                        'Authorization': `Bearer ${jwt}`
                     }
-                );
+                });
 
                 if (!response.ok) {
                     throw new Error('Failed to fetch customers');
@@ -319,9 +415,23 @@
                 updatePositionDisplay();
             } catch (error) {
                 console.error('Error:', error);
-                alert('Error fetching customers. Please try again.');
+                showNotification('Error fetching customers', false);
             }
         }
+
+        // Add event listeners after your initial load call
+        document.addEventListener('DOMContentLoaded', function() {
+            // Initial load
+            fetchCustomers();
+
+            // Add search input event listener
+            const searchInput = document.getElementById('searchInput');
+            searchInput.addEventListener('input', handleSearch);
+
+            // Add clear button event listener
+            const clearButton = document.getElementById('clearSearch');
+            clearButton.addEventListener('click', clearSearch);
+        });
 
         function displayCustomers(customers) {
             const tableBody = document.getElementById('customersTableBody');
@@ -350,7 +460,7 @@
                 currentCustomerId = customerId;  // Store the current customer ID
                 const jwt = sessionStorage.getItem('jwt');
                 const response = await fetch(
-                    `http://localhost:8080/franchiser/qbCustomer/${customerId}`,
+                    `http://localhost:8080/qbCustomer/${customerId}`,
                     {
                         headers: {
                             'Authorization': `Bearer ${jwt}`
@@ -404,7 +514,7 @@
             
             try {
                 const jwt = sessionStorage.getItem('jwt');
-                const response = await fetch('http://localhost:8080/franchiser/customers', {
+                const response = await fetch('http://localhost:8080/customer', {
                     method: 'POST',
                     headers: {
                         'Authorization': `Bearer ${jwt}`,

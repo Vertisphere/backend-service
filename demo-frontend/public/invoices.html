@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html>
+
 <head>
     <title>Invoices</title>
     <style>
@@ -8,7 +9,7 @@
             margin: 20px;
             background-color: #f5f5f5;
         }
-        
+
         .container {
             max-width: 1200px;
             margin: 0 auto;
@@ -24,7 +25,7 @@
             margin-top: 20px;
         }
 
-        .invoices-table th, 
+        .invoices-table th,
         .invoices-table td {
             padding: 12px;
             text-align: left;
@@ -177,22 +178,108 @@
             background-color: #dc3545;
         }
 
+        .status-badge {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        .status-pending {
+            background-color: #ffd700;
+            color: #000;
+        }
+
+        .status-preparing {
+            background-color: #17a2b8;
+            color: white;
+        }
+
+        .status-voided {
+            background-color: #dc3545;
+            color: white;
+        }
+
+        .status-completed {
+            background-color: #28a745;
+            color: white;
+        }
+
+        .status-paid {
+            background-color: #6f42c1;
+            color: white;
+        }
+
         @keyframes slideIn {
             from {
                 transform: translateX(100%);
                 opacity: 0;
             }
+
             to {
                 transform: translateX(0);
                 opacity: 1;
             }
         }
+
+        .approve-button {
+            padding: 8px 16px;
+            background-color: #28a745;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            min-width: 100px;
+        }
+
+        .approve-button:hover {
+            background-color: #218838;
+        }
+
+        .reject-button {
+            padding: 8px 16px;
+            background-color: #dc3545;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            min-width: 100px;
+        }
+
+        .reject-button:hover {
+            background-color: #c82333;
+        }
+
+        .pdf-button {
+            padding: 8px 16px;
+            background-color: #6c757d;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .pdf-button:hover {
+            background-color: #5a6268;
+        }
+
+        /* Adjust action buttons container to handle multiple buttons */
+        .action-buttons {
+            margin-top: 20px;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
     </style>
 </head>
+
 <body>
     <div class="container">
         <h1>Invoices</h1>
-        
+
         <div class="controls">
             <div class="page-size-control">
                 <label for="pageSize">Rows per page:</label>
@@ -243,30 +330,83 @@
     <div id="notification" class="notification"></div>
 
     <script>
+
         let currentPage = 1;
         let pageSize = 10; // Default page size
 
-        function getStatusBadge(docNumber) {
-            if (!docNumber) return '';
-            const status = docNumber[0];
-            switch(status) {
-                case 'P':
-                    return '<span class="status-badge status-pending">Pending</span>';
-                case 'V':
-                    return '<span class="status-badge status-voided">Voided</span>';
-                case 'R':
-                    return '<span class="status-badge status-approved">Approved</span>';
-                default:
-                    return '';
+        async function viewInvoicePDF(invoiceId) {
+            try {
+                const jwt = sessionStorage.getItem('jwt');
+                const response = await fetch(
+                    `http://localhost:8080/qbInvoicePDF/${invoiceId}`,
+                    {
+                        headers: {
+                            'Authorization': `Bearer ${jwt}`
+                        }
+                    }
+                );
+
+                if (!response.ok) {
+                    throw new Error('Failed to fetch PDF');
+                }
+
+                // Get the PDF blob from the response
+                const blob = await response.blob();
+
+                // Create a URL for the blob
+                const url = window.URL.createObjectURL(blob);
+
+                // Open the PDF in a new window
+                window.open(url, '_blank');
+
+                // Clean up the URL object after a delay
+                setTimeout(() => {
+                    window.URL.revokeObjectURL(url);
+                }, 100);
+
+            } catch (error) {
+                console.error('Error:', error);
+                showNotification('Error viewing PDF', false);
             }
         }
+
+        function getStatusBadge(docNumber, balance = null) {
+            if (!docNumber) return '';
+
+            let status = '';
+            let cssClass = '';
+
+            if (docNumber.startsWith('A1000000')) {
+                status = 'Pending';
+                cssClass = 'status-pending';
+            } else if (docNumber.startsWith('A0100000')) {
+                status = 'Preparing';
+                cssClass = 'status-preparing';
+            } else if (docNumber.startsWith('A0010000')) {
+                status = 'Voided';
+                cssClass = 'status-voided';
+            } else if (docNumber.startsWith('A0001000')) {
+                if (balance === 0) {
+                    status = 'Paid';
+                    cssClass = 'status-paid';
+                } else {
+                    status = 'Completed';
+                    cssClass = 'status-completed';
+                }
+            } else {
+                return ''; // Unknown status
+            }
+
+            return `<span class="status-badge ${cssClass}">${status}</span>`;
+        }
+
 
         function formatDate(dateString) {
             return new Date(dateString).toLocaleDateString();
         }
 
         function updatePositionDisplay() {
-            document.getElementById('currentPosition').textContent = 
+            document.getElementById('currentPosition').textContent =
                 `Position: ${currentPage}`;
         }
 
@@ -285,7 +425,7 @@
                 }
 
                 const response = await fetch(
-                    `http://localhost:8080/franchiser/qbInvoices?page_size=${pageSize}&page_token=${currentPage}&order_by=TxnDate desc`,
+                    `http://localhost:8080/qbInvoices?page_size=${pageSize}&page_token=${currentPage}&order_by=TxnDate desc`,
                     {
                         headers: {
                             'Authorization': `Bearer ${jwt}`
@@ -313,12 +453,12 @@
             invoices.forEach(invoice => {
                 const row = document.createElement('tr');
                 row.innerHTML = `
-                    <td>${invoice.Id}</td>
-                    <td>${invoice.CustomerRef.name}</td>
-                    <td>${getStatusBadge(invoice.DocNumber)}</td>
-                    <td>${formatDate(invoice.TxnDate)}</td>
-                    <td>$${invoice.TotalAmt.toFixed(2)}</td>
-                `;
+            <td>${invoice.Id}</td>
+            <td>${invoice.CustomerRef.name}</td>
+            <td>${getStatusBadge(invoice.DocNumber, invoice.Balance)}</td>
+            <td>${formatDate(invoice.TxnDate)}</td>
+            <td>$${invoice.TotalAmt.toFixed(2)}</td>
+        `;
                 row.onclick = () => showInvoiceDetails(invoice.Id);
                 tableBody.appendChild(row);
             });
@@ -330,7 +470,7 @@
             try {
                 const jwt = sessionStorage.getItem('jwt');
                 const response = await fetch(
-                    `http://localhost:8080/franchiser/qbInvoice/${invoiceId}`,
+                    `http://localhost:8080/qbInvoice/${invoiceId}`,
                     {
                         headers: {
                             'Authorization': `Bearer ${jwt}`
@@ -349,27 +489,49 @@
                     .map(line => {
                         const taxPercent = line.TaxLineDetail?.TaxPercent || 0;
                         return `
-                            <div class="invoice-line">
-                                <div><strong>Item:</strong> ${line.SalesItemLineDetail.ItemRef.name}</div>
-                                <div><strong>Quantity:</strong> ${line.SalesItemLineDetail.Qty}</div>
-                                <div><strong>Amount:</strong> $${line.Amount.toFixed(2)}</div>
-                                <div><strong>Tax Rate:</strong> ${taxPercent}%</div>
-                            </div>
-                        `;
+                    <div class="invoice-line">
+                        <div><strong>Item:</strong> ${line.SalesItemLineDetail.ItemRef.name}</div>
+                        <div><strong>Quantity:</strong> ${line.SalesItemLineDetail.Qty}</div>
+                        <div><strong>Amount:</strong> $${line.Amount.toFixed(2)}</div>
+                        <div><strong>Tax Rate:</strong> ${taxPercent}%</div>
+                    </div>
+                `;
                     }).join('');
 
                 invoiceDetails.innerHTML = lines;
 
-                // Show/hide action buttons based on status
+                // Show action buttons based on status
                 const actionButtons = document.getElementById('actionButtons');
-                if (data.invoice.DocNumber.startsWith('P')) {
-                    actionButtons.innerHTML = `
-                        <button class="approve-button" onclick="handleInvoiceAction(${invoiceId}, true)">Approve</button>
-                        <button class="reject-button" onclick="handleInvoiceAction(${invoiceId}, false)">Reject</button>
-                    `;
-                } else {
-                    actionButtons.innerHTML = '';
+
+                // Always show the PDF button
+                let buttonsHtml = `
+            <button class="pdf-button" onclick="viewInvoicePDF(${invoiceId})">
+                View PDF
+            </button>
+        `;
+
+                // Add status-based action buttons
+                if (data.invoice.DocNumber.startsWith('A1000000')) {
+                    buttonsHtml += `
+                <button class="approve-button" onclick="handleInvoiceAction(${invoiceId}, 'R')">
+                    Approve
+                </button>
+                <button class="reject-button" onclick="handleInvoiceAction(${invoiceId}, 'V')">
+                    Void
+                </button>
+            `;
+                } else if (data.invoice.DocNumber.startsWith('A0100000')) {
+                    buttonsHtml += `
+                <button class="approve-button" onclick="handleInvoiceAction(${invoiceId}, 'Z')">
+                    Complete
+                </button>
+                <button class="reject-button" onclick="handleInvoiceAction(${invoiceId}, 'V')">
+                    Void
+                </button>
+            `;
                 }
+
+                actionButtons.innerHTML = buttonsHtml;
 
                 document.getElementById('invoiceModal').style.display = 'block';
             } catch (error) {
@@ -378,18 +540,18 @@
             }
         }
 
-        async function handleInvoiceAction(invoiceId, approve) {
+        async function handleInvoiceAction(invoiceId, status) {
             try {
                 const jwt = sessionStorage.getItem('jwt');
                 const response = await fetch(
-                    `http://localhost:8080/franchiser/qbInvoice/${invoiceId}`,
+                    `http://localhost:8080/qbInvoice/${invoiceId}`,
                     {
                         method: 'PATCH',
                         headers: {
                             'Authorization': `Bearer ${jwt}`,
                             'Content-Type': 'application/json'
                         },
-                        body: JSON.stringify({ approve })
+                        body: JSON.stringify({ status })
                     }
                 );
 
@@ -397,7 +559,23 @@
                     throw new Error('Failed to update invoice');
                 }
 
-                showNotification(`Invoice ${approve ? 'approved' : 'rejected'} successfully`, true);
+                // Customize success message based on status
+                let actionMessage;
+                switch (status) {
+                    case 'R':
+                        actionMessage = 'approved';
+                        break;
+                    case 'Z':
+                        actionMessage = 'completed';
+                        break;
+                    case 'V':
+                        actionMessage = 'voided';
+                        break;
+                    default:
+                        actionMessage = 'updated';
+                }
+
+                showNotification(`Invoice ${actionMessage} successfully`, true);
                 closeModal();
                 fetchInvoices(); // Refresh the table
             } catch (error) {
@@ -437,7 +615,7 @@
         }
 
         // Close modal when clicking outside of it
-        window.onclick = function(event) {
+        window.onclick = function (event) {
             const modal = document.getElementById('invoiceModal');
             if (event.target === modal) {
                 closeModal();
@@ -448,4 +626,5 @@
         fetchInvoices();
     </script>
 </body>
+
 </html>
