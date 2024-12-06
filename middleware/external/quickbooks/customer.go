@@ -65,6 +65,25 @@ func (c *Client) GetCustomerById(realmID string, id string) (*Customer, error) {
 	return &r.Customer, nil
 }
 
+func (c *Client) GetCustomerIdsByName(realmID string, name string) ([]string, error) {
+	var r struct {
+		QueryResponse struct {
+			Customers []Customer `json:"Customer"`
+		}
+	}
+
+	query := fmt.Sprintf("SELECT id FROM Customer WHERE DisplayName LIKE '%%%s%%'", name)
+	if err := c.query(realmID, query, &r); err != nil {
+		return nil, err
+	}
+
+	ids := make([]string, 0, len(r.QueryResponse.Customers))
+	for _, customer := range r.QueryResponse.Customers {
+		ids = append(ids, customer.Id)
+	}
+	return ids, nil
+}
+
 // QueryCustomers accepts an SQL query and returns all customers found using it
 func (c *Client) QueryCustomers(realmID string, orderBy string, pageSize string, pageToken string, searchQuery string) ([]Customer, error) {
 	var resp struct {
@@ -86,108 +105,6 @@ func (c *Client) QueryCustomers(realmID string, orderBy string, pageSize string,
 
 	return resp.QueryResponse.Customers, nil
 }
-
-// GetAddress prioritizes the ship address, but falls back on bill address
-// func (c *Customer) GetAddress() PhysicalAddress {
-// 	if c.ShipAddr != nil {
-// 		return *c.ShipAddr
-// 	}
-// 	if c.BillAddr != nil {
-// 		return *c.BillAddr
-// 	}
-// 	return PhysicalAddress{}
-// }
-
-// GetWebsite de-nests the Website object
-// func (c *Customer) GetWebsite() string {
-// 	if c.WebAddr != nil {
-// 		return c.WebAddr.URI
-// 	}
-// 	return ""
-// }
-
-// GetPrimaryEmail de-nests the PrimaryEmailAddr object
-// func (c *Customer) GetPrimaryEmail() string {
-// 	if c.PrimaryEmailAddr != nil {
-// 		return c.PrimaryEmailAddr.Address
-// 	}
-// 	return ""
-// }
-
-// CreateCustomer creates the given Customer on the QuickBooks server,
-// returning the resulting Customer object.
-// func (c *Client) CreateCustomer(customer *Customer) (*Customer, error) {
-// 	var resp struct {
-// 		Customer Customer
-// 		Time     Date
-// 	}
-
-// 	if err := c.post("customer", customer, &resp, nil); err != nil {
-// 		return nil, err
-// 	}
-
-// 	return &resp.Customer, nil
-// }
-
-// FindCustomers gets the full list of Customers in the QuickBooks account.
-// func (c *Client) FindCustomers() ([]Customer, error) {
-// 	var resp struct {
-// 		QueryResponse struct {
-// 			Customers     []Customer `json:"Customer"`
-// 			MaxResults    int
-// 			StartPosition int
-// 			TotalCount    int
-// 		}
-// 	}
-
-// 	if err := c.query("SELECT COUNT(*) FROM Customer", &resp); err != nil {
-// 		return nil, err
-// 	}
-
-// 	if resp.QueryResponse.TotalCount == 0 {
-// 		return nil, errors.New("no customers could be found")
-// 	}
-
-// 	customers := make([]Customer, 0, resp.QueryResponse.TotalCount)
-
-// 	for i := 0; i < resp.QueryResponse.TotalCount; i += queryPageSize {
-// 		query := "SELECT * FROM Customer ORDERBY Id STARTPOSITION " + strconv.Itoa(i+1) + " MAXRESULTS " + strconv.Itoa(queryPageSize)
-
-// 		if err := c.query(query, &resp); err != nil {
-// 			return nil, err
-// 		}
-
-// 		if resp.QueryResponse.Customers == nil {
-// 			return nil, errors.New("no customers could be found")
-// 		}
-
-// 		customers = append(customers, resp.QueryResponse.Customers...)
-// 	}
-
-// 	return customers, nil
-// }
-
-// // FindCustomerByName gets a customer with a given name.
-// func (c *Client) FindCustomerByName(name string) (*Customer, error) {
-// 	var resp struct {
-// 		QueryResponse struct {
-// 			Customer   []Customer
-// 			TotalCount int
-// 		}
-// 	}
-
-// 	query := "SELECT * FROM Customer WHERE DisplayName = '" + strings.Replace(name, "'", "''", -1) + "'"
-
-// 	if err := c.query(query, &resp); err != nil {
-// 		return nil, err
-// 	}
-
-// 	if len(resp.QueryResponse.Customer) == 0 {
-// 		return nil, errors.New("no customers could be found")
-// 	}
-
-// 	return &resp.QueryResponse.Customer[0], nil
-// }
 
 // UpdateCustomer updates the given Customer on the QuickBooks server,
 // returning the resulting Customer object. It's a sparse update, as not all QB

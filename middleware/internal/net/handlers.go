@@ -3,9 +3,12 @@ package net
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"time"
 
@@ -15,41 +18,13 @@ import (
 	"github.com/Vertisphere/backend-service/internal/config"
 	"github.com/Vertisphere/backend-service/internal/domain"
 	"github.com/Vertisphere/backend-service/internal/storage"
+	"github.com/twilio/twilio-go"
+	twApi "github.com/twilio/twilio-go/rest/api/v2010"
 	"gopkg.in/square/go-jose.v2"
 
 	"github.com/sendgrid/sendgrid-go"
 	"github.com/sendgrid/sendgrid-go/helpers/mail"
 )
-
-// func CreateUser(fbc *fb.Client) http.HandlerFunc {
-// 	type request struct {
-// 		Email    string `json:"email"`
-// 		Password string `json:"password"`
-// 	}
-
-// 	type response struct {
-// 		Token string `json:"token"`
-// 		Success bool `json:"success"`
-// 	}
-
-// 	return func(w http.ResponseWriter, r *http.Request) {
-// 		req, err := decode[request](r)
-// 		if err != nil {
-// 			http.Error(w, "Invalid request payload", http.StatusBadRequest)
-// 			return
-// 		}
-// 		// Create user
-// 		err = fbc.CreateUser(req.Email, req.Password)
-// 		if err != nil {
-// 			http.Error(w, "Could not create user", http.StatusInternalServerError)
-// 			return
-// 		}
-// 		response := response{
-// 			Token:
-// 			Success: true}
-// 		encode(w, r, 200, response)
-// 	}
-// }
 
 func ShowClaims() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -67,8 +42,8 @@ func ShowClaims() http.HandlerFunc {
 		log.Println("QUICKBOOKS_CLIENT_SECRET:", c.Quickbooks.ClientSecret)
 		log.Println("FIREBASE KEY:", c.Firebase.APIKey)
 		log.Println("JWE_KEY:", c.JWEKey)
-		// claims := r.Context().Value("claims").(domain.Claims)
-		// log.Println(claims)
+		claims := r.Context().Value("claims").(domain.Claims)
+		log.Println(claims)
 	}
 }
 
@@ -150,7 +125,14 @@ func LoginQuickbooks(fbc *fb.Client, qbc *qb.Client, a *auth.Client, s *storage.
 		if firebaseID == "" {
 			// Password is base64 encoded realmID idk man
 			encodedRealmID := base64.StdEncoding.EncodeToString([]byte(req.RealmID))
-			createdUserResp, err := fbc.SignUp(userInfo.Email, encodedRealmID)
+			// TODO: if userInfo.PhoneNumber is not defined is it ""?
+			// Correct format for Firebase Auth
+			// phoneNumber := "+19099090900"  // E.164 format)
+			phoneNumber, err := qbToE164Phone(userInfo.PhoneNumber)
+			if err != nil {
+				phoneNumber = ""
+			}
+			createdUserResp, err := fbc.SignUp(userInfo.Email, encodedRealmID, phoneNumber)
 			if err != nil {
 				// TODO rollback transaction and delete firebase uesr
 				log.Println(err)
@@ -236,18 +218,18 @@ func LoginQuickbooks(fbc *fb.Client, qbc *qb.Client, a *auth.Client, s *storage.
 }
 
 func ListQBCustomers(qbc *qb.Client) http.HandlerFunc {
-	// type request struct {
-	// 	OrderBy   string `json:"order_by"`
-	// 	PageSize  string `json:"page_size"`
-	// 	PageToken string `json:"page_token"`
-	// 	Query     string `json:"query"`
-	// }
 	type response struct {
 		Customers []qb.Customer `json:"customers"`
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		// get claims from context
 		claims := r.Context().Value("claims").(domain.Claims)
+		// If franchisee, then don't allow
+		if !claims.IsFranchiser {
+			http.Error(w, "No Access", http.StatusServiceUnavailable)
+			return
+		}
+		// Get QB token and set jwt for QB Client
 		token, err := decryptJWE(claims.QBBearerToken)
 		if err != nil {
 			http.Error(w, "Could not decrypt QB token", http.StatusUnauthorized)
@@ -255,7 +237,11 @@ func ListQBCustomers(qbc *qb.Client) http.HandlerFunc {
 		}
 		qbc.SetClient(qb.BearerToken{AccessToken: string(token)})
 		// Get query params
-		orderBy := r.URL.Query().Get("order_by")
+		q := r.URL.Query()
+		orderBy := getQueryWithDefault(&q, "order_by", "DisplayName ASC")
+		// pageSize := getQueryWithDefault(&q, "order_by", "")
+		// pageToken :=
+		// orderBy := r.URL.Query().Get("order_by")
 		pageSize := r.URL.Query().Get("page_size")
 		pageToken := r.URL.Query().Get("page_token")
 		query := r.URL.Query().Get("query")
@@ -271,12 +257,13 @@ func ListQBCustomers(qbc *qb.Client) http.HandlerFunc {
 		if query == "" {
 			query = ""
 		}
-
+		// Get Customers from QB
 		customers, err := qbc.QueryCustomers(claims.QBCompanyID, orderBy, pageSize, pageToken, query)
 		if err != nil {
 			http.Error(w, "Could not get customers", http.StatusInternalServerError)
 			return
 		}
+		// Write customers to response
 		resp := response{Customers: customers}
 		encode(w, r, http.StatusOK, resp)
 	}
@@ -318,7 +305,12 @@ func CreateCustomer(fbc *fb.Client, qbc *qb.Client, a *auth.Client, s *storage.S
 		log.Println(customer)
 		// Create firebase account for customer
 		encodedRealmID := base64.StdEncoding.EncodeToString([]byte(claims.QBCompanyID))
-		createdUserResp, err := fbc.SignUp(req.CustomerEmail, encodedRealmID)
+		phoneNumber, err := qbToE164Phone(customer.PrimaryPhone.FreeFormNumber)
+		if err != nil {
+			phoneNumber = ""
+		}
+		log.Println(phoneNumber)
+		createdUserResp, err := fbc.SignUp(req.CustomerEmail, encodedRealmID, phoneNumber)
 		if err != nil {
 			log.Println(err)
 			http.Error(w, "Could not create user", http.StatusInternalServerError)
@@ -342,8 +334,8 @@ func CreateCustomer(fbc *fb.Client, qbc *qb.Client, a *auth.Client, s *storage.S
 		log.Println(link)
 
 		// TODO: clean this shit up
-		from := mail.NewEmail("Example User", "sunny@vertisphere.io")
-		subject := "Sending with SendGrid is Fun"
+		from := mail.NewEmail("Ordrport Support", "sunny@vertisphere.io")
+		subject := "Password Reset for Ordrport"
 		to := mail.NewEmail("Example User", "sunghyoun@icloud.com")
 		plainTextContent := "and easy to do anywhere, even with Go"
 		htmlContent := link
@@ -456,7 +448,7 @@ func LoginCustomer(fbc *fb.Client, qbc *qb.Client, a *auth.Client, s *storage.SQ
 			QBCompanyID:   dbCompany.QBCompanyID,
 			QBCustomerID:  customer.QBCustomerID,
 			QBBearerToken: encryptedToken,
-			IsFranchiser:  true,
+			IsFranchiser:  false,
 			FirebaseID:    customer.FirebaseID,
 			// For future
 			// IsAdmin
@@ -518,8 +510,8 @@ func ListQBItems(qbc *qb.Client) http.HandlerFunc {
 		encode(w, r, http.StatusOK, resp)
 	}
 }
-func CreateQBInvoice(qbc *qb.Client) http.HandlerFunc {
-	// To be honest the only real values we need from each item is the id, tax code, and price
+func CreateQBInvoice(qbc *qb.Client, twc *twilio.RestClient, a *auth.Client) http.HandlerFunc {
+	// To be honest the only realk values we need from each item is the id, tax code, and price
 	// Maybe we should set the tax code to 0 when it's not set and then find the right values for it here?? TODO
 	type Line struct {
 		Item     qb.Item `json:"item"`
@@ -534,18 +526,25 @@ func CreateQBInvoice(qbc *qb.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// get claims from context
 		claims := r.Context().Value("claims").(domain.Claims)
+		// Franchisers should not be able to create invoices
+		if claims.IsFranchiser {
+			http.Error(w, "No Access", http.StatusServiceUnavailable)
+			return
+		}
+		// Get QB token and set jwt for QB Client
 		token, err := decryptJWE(claims.QBBearerToken)
 		if err != nil {
 			http.Error(w, "Could not decrypt QB token", http.StatusUnauthorized)
 			return
 		}
 		qbc.SetClient(qb.BearerToken{AccessToken: string(token)})
-
+		// Decode request
 		req, err := decode[request](r)
 		if err != nil {
 			http.Error(w, "Invalid request payload", http.StatusBadRequest)
 			return
 		}
+		// Create invoice order details
 		var lines []qb.Line
 		for _, line := range req.Lines {
 			unitPrice, err := line.Item.UnitPrice.Float64()
@@ -564,25 +563,89 @@ func CreateQBInvoice(qbc *qb.Client) http.HandlerFunc {
 				},
 			})
 		}
-
+		// Set Docnumber and customer reference for invoice
 		invoice := &qb.Invoice{
 			Line:        lines,
 			CustomerRef: qb.ReferenceType{Value: claims.QBCustomerID},
-			DocNumber:   "P" + time.Now().Format("060102150405") + claims.QBCustomerID,
+			DocNumber:   "A1000000-" + time.Now().Format("060102150405"),
 			// We're going to assume that email is set for customer in qb
 			// In fact, I'm going to update the qb customer when we create the franchisee user
 			// BillEmail: qb.EmailAddress{Address: },
 		}
-		qbc.CreateInvoice(claims.QBCompanyID, invoice)
-		// TODO: add twilio sms messaging
+		// Create Invoice and send
+		invoiceResp, err := qbc.CreateInvoice(claims.QBCompanyID, invoice)
+		if err != nil {
+			log.Println(err)
+			http.Error(w, "Could not create invoice", http.StatusInternalServerError)
+			return
+		}
+
 		resp := response{Success: true}
 		encode(w, r, http.StatusOK, resp)
+
+		// Messaging isn't as important so we send message after we send response
+		// TODO: add twilio sms messaging
+		// add twilio message
+		// Do we get the phone number from the customer or the user??? Going to be using firebase phone number for now
+		// Okay here's how we're setting priority:
+		// 1. Check MfaEnrollment PhoneNumber (aka the phone number set for MFA)
+		// if none exist then: 2. Check firebase.UserInfo.PhoneNumber (What got set when firebase account was created)
+		// if none exist then: 3. Check qb customer phone
+		// Get firebase user phone number
+		user, err := a.GetUser(r.Context(), claims.FirebaseID)
+		if err != nil {
+			log.Println(err)
+		}
+		// TODO: implement get mfa enrollment in fbc
+		// 1. get mfaInfo
+		// phoneNumber := fbc.GetUserInfo.MfaEnrollment.PhoneNumber
+		var phoneNumber string
+		// 2.
+		if phoneNumber == "" {
+			phoneNumber = user.PhoneNumber
+		}
+		// 3.
+
+		customer, err := qbc.GetCustomerById(claims.QBCompanyID, claims.QBCustomerID)
+		if err != nil {
+			log.Printf("%s", err)
+		}
+		if phoneNumber == "" {
+			log.Println(customer.PrimaryPhone.FreeFormNumber)
+			phoneNumber, err = qbToE164Phone(customer.PrimaryPhone.FreeFormNumber)
+			if err != nil {
+				log.Printf("%s", err)
+			}
+		}
+		// TODO FOR Demo purpose
+		// if phoneNumber == "" {
+		// 	log.Println("No Phone number to send notification to. None sent.")
+		// 	return
+		// }
+		// TODO are all these phone number formats the same?
+		params := &twApi.CreateMessageParams{}
+		params.SetBody(fmt.Sprintf("A new order %s has been created by: %s. For more details please visit: https://ordrport.com/franchiser/invoices", customer.DisplayName, invoiceResp.Id))
+		// Fuck it we hard code the phone number (for now)
+		params.SetFrom("+16478009984")
+		params.SetTo("+15062329415")
+
+		twResp, err := twc.Api.CreateMessage(params)
+		if err != nil {
+			log.Printf("Could not send SMS message %s", err)
+		} else {
+			if twResp.Body != nil {
+				log.Println(*twResp.Body)
+			} else {
+				log.Println(twResp.Body)
+			}
+		}
+
 	}
 }
 
-func ReviewQBInvoice(qbc *qb.Client) http.HandlerFunc {
+func UpdateQBInvoice(qbc *qb.Client, twc *twilio.RestClient) http.HandlerFunc {
 	type request struct {
-		Approve bool `json:"approve"`
+		Status string `json:"status"`
 	}
 	type response struct {
 		Success bool `json:"success"`
@@ -590,6 +653,12 @@ func ReviewQBInvoice(qbc *qb.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// get claims from context
 		claims := r.Context().Value("claims").(domain.Claims)
+		// Franchisee cannot review invoice
+		if !claims.IsFranchiser {
+			http.Error(w, "No access", http.StatusServiceUnavailable)
+			return
+		}
+		// Get QB token and set jwt for QB Client
 		token, err := decryptJWE(claims.QBBearerToken)
 		if err != nil {
 			http.Error(w, "Could not decrypt QB token", http.StatusUnauthorized)
@@ -614,25 +683,29 @@ func ReviewQBInvoice(qbc *qb.Client) http.HandlerFunc {
 			return
 		}
 
-		if req.Approve {
+		if req.Status == "R" {
+			if len(existingInvoice.DocNumber) < 8 || existingInvoice.DocNumber[0:8] != "A1000000" {
+				http.Error(w, "Invoice is not in pending state. Verify that invoice has not been already been reviewed and was created from ordrport.", http.StatusBadRequest)
+				return
+			}
 			// Calculate the TxnDate and DueDate difference of existingInvoice
 			// Then take that difference and add it to the current date
 			newDueDate := time.Now().Add(existingInvoice.DueDate.Time.Sub(existingInvoice.TxnDate.Time))
 			log.Println(newDueDate)
-			// slice old doc number and add R to the front
-			newDocNumber := "R" + existingInvoice.DocNumber[1:]
+			// slice old doc number and change status to reviewed
+			newDocNumber := "A0100000-" + existingInvoice.DocNumber[10:]
 			invoiceToUpdate := struct {
 				Id        string `json:"Id"`
 				SyncToken string `json:"SyncToken"`
 				Sparse    bool   `json:"sparse"`
 				DocNumber string `json:"DocNumber"`
-				DueDate   string `json:"DueDate"`
+				// DueDate   string `json:"DueDate"`
 			}{
 				Id:        invoiceId,
 				SyncToken: existingInvoice.SyncToken,
 				Sparse:    true,
 				DocNumber: newDocNumber,
-				DueDate:   newDueDate.Format("2006-01-02"),
+				// DueDate:   newDueDate.Format("2006-01-02"),
 			}
 			// TODO: Figure out why I'm getting null point on requests using INvoice struct
 			// For now just going to initialize my own
@@ -650,20 +723,99 @@ func ReviewQBInvoice(qbc *qb.Client) http.HandlerFunc {
 				http.Error(w, "Could not send invoice", http.StatusInternalServerError)
 				return
 			}
-		} else {
-			newDocNumber := "V" + existingInvoice.DocNumber[1:]
-			invoiceToUpdate := qb.Invoice{
+			params := &twApi.CreateMessageParams{}
+			params.SetBody(fmt.Sprintf("Order %s has been approved and is beginning preparation! For more details please visit: https://ordrport.com/franchisee/invoices", invoiceId))
+			// Fuck it we hard code the phone number (for now)
+			params.SetFrom("+16478009984")
+			params.SetTo("+15062329415")
+
+			twResp, err := twc.Api.CreateMessage(params)
+			if err != nil {
+				log.Printf("Could not send SMS message %s", err)
+			} else {
+				if twResp.Body != nil {
+					log.Println(*twResp.Body)
+				} else {
+					log.Println(twResp.Body)
+				}
+			}
+
+		} else if req.Status == "V" {
+			newDocNumber := "A0010000" + existingInvoice.DocNumber[10:]
+			invoiceToUpdate := struct {
+				Id        string `json:"Id"`
+				SyncToken string `json:"SyncToken"`
+				Sparse    bool   `json:"sparse"`
+				DocNumber string `json:"DocNumber"`
+			}{
 				Id:        invoiceId,
+				SyncToken: existingInvoice.SyncToken,
+				Sparse:    true,
 				DocNumber: newDocNumber,
 			}
-			qbc.UpdateInvoice(claims.QBCompanyID, &invoiceToUpdate, existingInvoice.SyncToken)
-			// void invoice
-			err = qbc.VoidInvoice(claims.QBCompanyID, invoiceId, existingInvoice.SyncToken)
+			log.Println(invoiceToUpdate)
+			updatedInvoice, err := qbc.UpdateInvoice(claims.QBCompanyID, &invoiceToUpdate, existingInvoice.SyncToken)
 			if err != nil {
+				log.Println(err)
+				http.Error(w, "Could not update invoice", http.StatusInternalServerError)
+				return
+			}
+			log.Println(updatedInvoice)
+			// void invoice
+			syncTokenInt, err := strconv.Atoi(existingInvoice.SyncToken)
+			if err != nil {
+				log.Println(err)
+				http.Error(w, "Could not convert SyncToken to int", http.StatusInternalServerError)
+				return
+			}
+			err = qbc.VoidInvoice(claims.QBCompanyID, invoiceId, strconv.Itoa(syncTokenInt+1))
+			if err != nil {
+				log.Println(err)
 				http.Error(w, "Could not void invoice", http.StatusInternalServerError)
 				return
 			}
+		} else if req.Status == "Z" {
+			if len(existingInvoice.DocNumber) < 8 || existingInvoice.DocNumber[0:8] != "A0100000" {
+				http.Error(w, "Invoice is not in pending state. Verify that invoice has not been already been reviewed and was created from ordrport.", http.StatusBadRequest)
+				return
+			}
+			// slice old doc number and change status to reviewed
+			newDocNumber := "A0001000-" + existingInvoice.DocNumber[10:]
+			invoiceToUpdate := struct {
+				Id        string `json:"Id"`
+				SyncToken string `json:"SyncToken"`
+				Sparse    bool   `json:"sparse"`
+				DocNumber string `json:"DocNumber"`
+			}{
+				Id:        invoiceId,
+				SyncToken: existingInvoice.SyncToken,
+				Sparse:    true,
+				DocNumber: newDocNumber,
+			}
+			// TODO: Figure out why I'm getting null point on requests using INvoice struct
+			// For now just going to initialize my own
+			_, err = qbc.UpdateInvoice(claims.QBCompanyID, invoiceToUpdate, existingInvoice.SyncToken)
+			if err != nil {
+				log.Println(err)
+				http.Error(w, "Could not update invoice", http.StatusInternalServerError)
+				return
+			}
+
+			// Send email and notification to customer
+			err = qbc.SendInvoice(claims.QBCompanyID, invoiceId, "")
+			if err != nil {
+				log.Println(err)
+				http.Error(w, "Could not send invoice", http.StatusInternalServerError)
+				return
+			}
+
+		} else {
+			http.Error(w, "Invalid status", http.StatusBadRequest)
+			return
 		}
+		// respond with 200
+		resp := response{Success: true}
+		encode(w, r, http.StatusOK, resp)
 	}
 }
 
@@ -671,18 +823,19 @@ func ListQBInvoices(qbc *qb.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// get claims from context
 		claims := r.Context().Value("claims").(domain.Claims)
+		// get QB token and set jwt for QB Client
 		token, err := decryptJWE(claims.QBBearerToken)
 		if err != nil {
 			http.Error(w, "Could not decrypt QB token", http.StatusUnauthorized)
 			return
 		}
 		qbc.SetClient(qb.BearerToken{AccessToken: string(token)})
-
 		// Get query params
 		orderBy := r.URL.Query().Get("order_by")
 		pageSize := r.URL.Query().Get("page_size")
 		pageToken := r.URL.Query().Get("page_token")
-		// query := r.URL.Query().Get("query")
+		id := r.URL.Query().Get("id")
+		statuses := r.URL.Query().Get("statuses")
 		if orderBy == "" {
 			orderBy = "DocNumber ASC"
 		}
@@ -692,51 +845,21 @@ func ListQBInvoices(qbc *qb.Client) http.HandlerFunc {
 		if pageToken == "" {
 			pageToken = "1"
 		}
-		// if query == "" {
-		// 	query = ""
-		// }
+		if statuses == "" {
+			statuses = "PRVZ"
+		}
+		// Because quickbooks doesn't allow to query invoices by name directly, first get ids of customers based on query, and then get invoices for those customers
+		if !claims.IsFranchiser {
+			id = claims.QBCustomerID
+		}
 
-		invoices, err := qbc.QueryInvoices(claims.QBCompanyID, orderBy, pageSize, pageToken)
+		invoices, err := qbc.QueryInvoices(claims.QBCompanyID, orderBy, pageSize, pageToken, statuses, id)
 		if err != nil {
 			log.Println(err)
 			http.Error(w, "Could not get invoices", http.StatusInternalServerError)
 			return
 		}
-		encode(w, r, http.StatusOK, invoices)
-	}
-}
 
-func ListQBInvoicesCustomer(qbc *qb.Client) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		// get claims from context
-		claims := r.Context().Value("claims").(domain.Claims)
-		token, err := decryptJWE(claims.QBBearerToken)
-		if err != nil {
-			http.Error(w, "Could not decrypt QB token", http.StatusUnauthorized)
-			return
-		}
-		qbc.SetClient(qb.BearerToken{AccessToken: string(token)})
-
-		// Get query params
-		orderBy := r.URL.Query().Get("order_by")
-		pageSize := r.URL.Query().Get("page_size")
-		pageToken := r.URL.Query().Get("page_token")
-		if orderBy == "" {
-			orderBy = "DocNumber ASC"
-		}
-		if pageSize == "" {
-			pageSize = "10"
-		}
-		if pageToken == "" {
-			pageToken = "1"
-		}
-
-		invoices, err := qbc.QueryInvoicesCustomer(claims.QBCompanyID, orderBy, pageSize, pageToken, claims.QBCustomerID)
-		log.Println(invoices)
-		if err != nil {
-			http.Error(w, "Could not get invoices", http.StatusInternalServerError)
-			return
-		}
 		encode(w, r, http.StatusOK, invoices)
 	}
 }
@@ -747,34 +870,40 @@ func GetQBCustomer(qbc *qb.Client, s *storage.SQLStorage) http.Handler {
 		IsLinked bool        `json:"is_linked"`
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// get claims from context
+		// Get claims from jwt
 		claims := r.Context().Value("claims").(domain.Claims)
+		// Decrypt JWE for QB from JWT
 		token, err := decryptJWE(claims.QBBearerToken)
 		if err != nil {
 			http.Error(w, "Could not decrypt QB token", http.StatusUnauthorized)
 			return
 		}
 		qbc.SetClient(qb.BearerToken{AccessToken: string(token)})
-
+		// Get Customer ID from URL
 		customerId := r.PathValue("id")
 		if customerId == "" {
 			http.Error(w, "No id in url", http.StatusBadRequest)
 			return
 		}
-		// profile this call
-		now := time.Now()
+		// If franchisee is calling, they can get only get information about themselves
+		if !claims.IsFranchiser && customerId != claims.QBCustomerID {
+			log.Println("Customer ID")
+			http.Error(w, "No Access", http.StatusServiceUnavailable)
+			return
+		}
+		// Get customer from QB
 		customer, err := qbc.GetCustomerById(claims.QBCompanyID, customerId)
 		if err != nil {
 			http.Error(w, "Could not get customer", http.StatusInternalServerError)
 			return
 		}
-		log.Println(time.Since(now))
+		// Check if firebase account exists for QB user
 		isLinked, err := s.IsFirebaseUserCustomer(customerId)
 		if err != nil {
 			http.Error(w, "Could not check if firebase user linked to qb customer", http.StatusInternalServerError)
 			return
 		}
-
+		// Return customer and if linked
 		resp := response{Customer: *customer, IsLinked: isLinked}
 		encode(w, r, http.StatusOK, resp)
 	})
@@ -787,23 +916,31 @@ func GetQBInvoice(qbc *qb.Client) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// get claims from context
 		claims := r.Context().Value("claims").(domain.Claims)
+		// Get QB token and set jwt for QB Client
 		token, err := decryptJWE(claims.QBBearerToken)
 		if err != nil {
 			http.Error(w, "Could not decrypt QB token", http.StatusUnauthorized)
 			return
 		}
 		qbc.SetClient(qb.BearerToken{AccessToken: string(token)})
-
+		// Get query params
 		invoiceId := r.PathValue("id")
 		if invoiceId == "" {
 			http.Error(w, "No id in url", http.StatusBadRequest)
 			return
 		}
+		// Get Invoice from QB
 		invoice, err := qbc.FindInvoiceById(claims.QBCompanyID, invoiceId)
 		if err != nil {
 			http.Error(w, "Could not get invoice", http.StatusInternalServerError)
 			return
 		}
+		// If franchisee is calling, they can get only get information about themselves
+		if !claims.IsFranchiser && invoice.CustomerRef.Value != claims.QBCustomerID {
+			http.Error(w, "No Access", http.StatusServiceUnavailable)
+			return
+		}
+		// Write invoice to response
 		resp := response{Invoice: *invoice}
 		encode(w, r, http.StatusOK, resp)
 	})
@@ -838,488 +975,14 @@ func GetQBInvoicePDF(qbc *qb.Client) http.Handler {
 	})
 }
 
-// // Create a type for all the values I put into the context from the middleware
-// // Create a method that retrieves the values from the context, error handles, and returns the value in correct format
-// func handlePostFranchise(a *auth.Client, s *storage.SQLStorage) http.HandlerFunc {
-// 	type request struct {
-// 		Franchise domain.Franchise `json:"franchise"`
-// 	}
-// 	type response struct {
-// 		id      string `json:"id"`
-// 		success bool   `json:"success"`
-// 	}
-// 	return func(w http.ResponseWriter, r *http.Request) {
-// 		account_id := r.Context().Value("account_id")
-// 		if account_id == nil {
-// 			// encode(w, r, 401, response{success: false, id: })
-// 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-// 			return
-// 		}
-// 		accountIDStr, ok := account_id.(string)
-// 		if !ok {
-// 			http.Error(w, "Invalid account ID", http.StatusBadRequest)
-// 			return
-// 		}
-
-// 		req, err := decode[request](r)
-// 		if err != nil {
-// 			http.Error(w, "Invalid request payload", http.StatusBadRequest)
-// 			return
-// 		}
-// 		err = s.CreateFranchise(accountIDStr, req.Franchise)
-// 		if err != nil {
-// 			// log error
-// 			log.Println(err)
-// 			http.Error(w, "Could not create franchise", http.StatusInternalServerError)
-// 			return
-// 		}
-// 		// create franchiser user
-// 		// user_id, err := s.CreateFranchiseUser()
-// 		// write to reponse with response struct
-// 		response := response{success: true}
-// 		encode(w, r, 200, response)
-// 	}
-// }
-
-// func handlePostUser(a *auth.Client, s *storage.SQLStorage) http.HandlerFunc {
-// 	// -- 0 for franchisee_non_admin, 1 for franchisee_admin,
-// 	// 2 for franchiser_non_admin, 3 for franchiser_admin
-// 	type request struct {
-// 		Name string `json:"name"`
-// 		Role int    `json:"role"`
-// 	}
-// 	type response struct {
-// 		Success bool `json:"success"`
-// 	}
-// 	return func(w http.ResponseWriter, r *http.Request) {
-// 		account_id := r.Context().Value("account_id")
-// 		if account_id == nil {
-// 			// encode(w, r, 401, response{success: false, id: })
-// 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-// 			return
-// 		}
-// 		accountIDStr, ok := account_id.(string)
-// 		if !ok {
-// 			http.Error(w, "Invalid account ID", http.StatusBadRequest)
-// 			return
-// 		}
-// 		req, err := decode[request](r)
-// 		if err != nil {
-// 			http.Error(w, "Invalid request payload", http.StatusBadRequest)
-// 			return
-// 		}
-// 		if req.Role == 0 || req.Role == 1 {
-// 			// a.EmailSignInLink(r.Context(), req.Name)
-// 			// s.CreateFranchiseeUser(req.Name, req.Role)
-// 		} else if req.Role == 2 || req.Role == 3 {
-// 			franchiseID, err := s.GetFranchiseIDFromAccountId(accountIDStr)
-// 			if err != nil {
-// 				http.Error(w, "User not designated as franchiser", http.StatusInternalServerError)
-// 				return
-// 			}
-// 			err = s.CreateFranchiseUser(accountIDStr, franchiseID, req.Name)
-// 			if err != nil {
-// 				http.Error(w, "Could not create user, likely already exists", http.StatusInternalServerError)
-// 				return
-// 			}
-// 		} else {
-// 			http.Error(w, "Invalid role", http.StatusBadRequest)
-// 			return
-// 		}
-// 		response := response{Success: true}
-// 		encode(w, r, 200, response)
-// 	}
-// }
-
-// func handleCustomToken(a *auth.Client, s *storage.SQLStorage) http.HandlerFunc {
-// 	return func(w http.ResponseWriter, r *http.Request) {
-// 		account_id := r.Context().Value("account_id")
-// 		if account_id == nil {
-// 			// encode(w, r, 401, response{success: false, id: })
-// 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-// 			return
-// 		}
-// 		accountIDStr, ok := account_id.(string)
-// 		if !ok {
-// 			http.Error(w, "Invalid account ID", http.StatusBadRequest)
-// 			return
-// 		}
-// 		// Get User's Role from DB
-// 		app_user_id, franchise_id, franchisee_id, role, err := s.GetUserClaims(accountIDStr)
-// 		if err != nil {
-// 			log.Println(err)
-// 			http.Error(w, "Could not get user role", http.StatusInternalServerError)
-// 			return
-// 		}
-
-// 		token, err := a.CustomTokenWithClaims(r.Context(), accountIDStr, map[string]interface{}{
-// 			"app_user_id":   app_user_id,
-// 			"franchise_id":  franchise_id,
-// 			"franchisee_id": franchisee_id,
-// 			"role":          role,
-// 		})
-// 		if err != nil {
-// 			http.Error(w, "Could not create custom token", http.StatusInternalServerError)
-// 			return
-// 		}
-// 		// send custom token back
-// 		w.Write([]byte(fmt.Sprintf(`{"token": "%s"}`, token)))
-// 	}
-// }
-
-// func handlePostFranchisee(a *auth.Client, s *storage.SQLStorage) http.HandlerFunc {
-// 	type request struct {
-// 		FranchiseeName   string `json:"franchisee_name"`
-// 		HeadquartersName string `json:"headquarters_address"`
-// 		Email            string `json:"email"`
-// 		Phone            string `json:"phone"`
-// 	}
-// 	type response struct {
-// 		Link    string `json:"link"`
-// 		Success bool   `json:"success"`
-// 	}
-// 	return func(w http.ResponseWriter, r *http.Request) {
-// 		roleIDValue := r.Context().Value("role")
-// 		roleIDFloat, ok := roleIDValue.(float64)
-// 		if !ok {
-// 			http.Error(w, "Cannot get role ID from JWT", http.StatusBadRequest)
-// 			return
-// 		}
-// 		role := int(roleIDFloat)
-
-// 		franchiseIDValue := r.Context().Value("franchise_id")
-// 		franchiseIDFloat, ok := franchiseIDValue.(float64)
-// 		if !ok {
-// 			http.Error(w, "Cannot get franchise ID from JWT", http.StatusBadRequest)
-// 			return
-// 		}
-// 		franchise_id := int(franchiseIDFloat)
-
-// 		if role != 3 && role != 2 {
-// 			http.Error(w, "Requires Franchiser Role", http.StatusUnauthorized)
-// 			return
-// 		}
-// 		req, err := decode[request](r)
-// 		if err != nil {
-// 			http.Error(w, "Invalid request payload", http.StatusBadRequest)
-// 			return
-// 		}
-// 		// Create Anon User in Firebase and get UID
-// 		// Create Franchisee in DB and add UID
-// 		// create app_user in DB and link to franchise, franchisee, and firbase uid
-// 		u := auth.UserToCreate{}
-// 		u.Email(req.Email)
-// 		uid, err := a.CreateUser(r.Context(), &u)
-// 		if err != nil {
-// 			http.Error(w, "Could not create user", http.StatusInternalServerError)
-// 			return
-// 		}
-// 		// TODO: use env variable for URL
-// 		emailSetting := auth.ActionCodeSettings{
-// 			URL: "https://backend-435201.firebaseapp.com",
-// 		}
-// 		// a.GetUser(r.Context(), uid.UID)
-// 		link, err := a.PasswordResetLinkWithSettings(r.Context(), req.Email, &emailSetting)
-
-// 		// TODO: send email with link.
-// 		// Right now admin sdk only let's you create oob link instead of actually sending the email.
-// 		// And the shitty thing is that google cloud run doesn't let you send emails
-// 		// So unless we figure out another hosting, we'll just have to use external email service for now.
-
-// 		if err != nil {
-// 			http.Error(w, "Could not create email link", http.StatusInternalServerError)
-// 			return
-// 		}
-
-// 		franchisee_id, err := s.CreateFranchisee(franchise_id, req.FranchiseeName, req.HeadquartersName, req.Phone)
-// 		if err != nil {
-// 			// Delete anon user created if db creation fails
-// 			a.DeleteUser(r.Context(), uid.UID)
-// 			http.Error(w, "Could not create franchisee", http.StatusInternalServerError)
-// 			return
-// 		}
-// 		err = s.CreateFranchiseeUser(uid.UID, franchise_id, franchisee_id, req.FranchiseeName+" Admin")
-// 		if err != nil {
-// 			// Delete anon user created if db creation fails
-// 			a.DeleteUser(r.Context(), uid.UID)
-// 			http.Error(w, "Could not create franchisee", http.StatusInternalServerError)
-// 			return
-// 		}
-// 		response := response{Success: true, Link: link}
-// 		encode(w, r, 200, response)
-// 	}
-// }
-
-// func handlePostProduct(s *storage.SQLStorage) http.HandlerFunc {
-// 	// TODO add price santization
-// 	type request struct {
-// 		ProductName string  `json:"product_name"`
-// 		Description string  `json:"description"`
-// 		Price       float64 `json:"price"`
-// 		// ProductStatus is active by default = 0
-// 		// ProductStatus string  `json:"product_status"`
-// 	}
-// 	type response struct {
-// 		ProductID int  `json:"product_id"`
-// 		Success   bool `json:"success"`
-// 	}
-// 	return func(w http.ResponseWriter, r *http.Request) {
-// 		roleIDValue := r.Context().Value("role")
-// 		roleIDFloat, ok := roleIDValue.(float64)
-// 		if !ok {
-// 			http.Error(w, "Cannot get role ID from JWT", http.StatusBadRequest)
-// 			return
-// 		}
-// 		role := int(roleIDFloat)
-
-// 		franchiseIDValue := r.Context().Value("franchise_id")
-// 		franchiseIDFloat, ok := franchiseIDValue.(float64)
-// 		if !ok {
-// 			http.Error(w, "Cannot get franchise ID from JWT", http.StatusBadRequest)
-// 			return
-// 		}
-// 		franchise_id := int(franchiseIDFloat)
-
-// 		if role != 3 && role != 2 {
-// 			http.Error(w, "Requires Franchiser Role", http.StatusUnauthorized)
-// 			return
-// 		}
-// 		req, err := decode[request](r)
-// 		if err != nil {
-// 			http.Error(w, "Invalid request payload", http.StatusBadRequest)
-// 			return
-// 		}
-
-// 		product_id, err := s.CreateProduct(franchise_id, req.ProductName, req.Description, req.Price)
-// 		if err != nil {
-// 			log.Println(err)
-// 			http.Error(w, "Could not create product", http.StatusInternalServerError)
-// 			return
-// 		}
-// 		response := response{Success: true, ProductID: product_id}
-// 		encode(w, r, 200, response)
-// 	}
-// }
-
-// // handleSearchProduct handles the search and listing of products with pagination and sorting.
-// func handleSearchProduct(s *storage.SQLStorage) http.HandlerFunc {
-// 	allowedSortFields := map[string]bool{
-// 		"price":      true,
-// 		"created_at": true,
-// 		"updated_at": true,
-// 	}
-// 	allowedSortOrders := map[string]bool{
-// 		"asc":  true,
-// 		"desc": true,
-// 	}
-// 	type response struct {
-// 		Products      []domain.Product `json:"products"`
-// 		NextPageToken string           `json:"next_page_token,omitempty"`
-// 	}
-
-// 	return func(w http.ResponseWriter, r *http.Request) {
-// 		// TODO right now pagination is based off product_id >,
-// 		// So you will have to get to a null page to figure out that you're at the end.
-// 		// Is there a better way?
-// 		franchiseIdParam := r.Context().Value("franchise_id")
-// 		franchiseIdFloat, ok := franchiseIdParam.(float64)
-// 		franchiseId := int(franchiseIdFloat)
-// 		if !ok {
-// 			http.Error(w, "Invalid franchise ID", http.StatusBadRequest)
-// 			return
-// 		}
-
-// 		var orderBy string
-// 		var orderByFields []string
-// 		orderByParam := r.URL.Query().Get("order_by")
-// 		if orderByParam == "" {
-// 			orderBy = "created_at desc"
-// 		} else {
-// 			orderByFields = strings.Split(orderByParam, ",")
-// 			for _, field := range orderByFields {
-// 				parts := strings.Split(field, " ")
-// 				if len(parts) != 2 {
-// 					http.Error(w, "Invalid parameter: order_by", http.StatusBadRequest)
-// 					return
-// 				}
-// 				if !allowedSortFields[parts[0]] || !allowedSortOrders[parts[1]] {
-// 					http.Error(w, "Invalid parameter: order_by", http.StatusBadRequest)
-// 					return
-// 				}
-// 			}
-// 			orderBy = strings.Join(orderByFields, ", ")
-// 		}
-
-// 		query := r.URL.Query().Get("query")
-
-// 		// For now page token doesn't contain continuity information so we just base 64 encode the id
-// 		// In the future we can add more informoartion like query and order_by
-// 		pageTokenParam := r.URL.Query().Get("page_token")
-// 		pageTokenByte, err := base64.StdEncoding.DecodeString(pageTokenParam)
-// 		if err != nil {
-// 			http.Error(w, "Invalid parameter: page_token", http.StatusBadRequest)
-// 			return
-// 		}
-// 		pageToken := string(pageTokenByte)
-
-// 		// TODO: FIX THIS PAGINATION
-// 		// pageToken := string(pageTokenByte)
-// 		// pageTokenMap := make(map[string]int)
-// 		// err = json.Unmarshal(pageTokenByte, &pageTokenMap)
-// 		// if err != nil {
-// 		// 	http.Error(w, "Invalid parameter: page_token", http.StatusBadRequest)
-// 		// 	return
-// 		// }
-// 		// Get list of keys of pageTokenMap
-// 		// pageTokenKeys := pageTokenMap["keys"]
-
-// 		pageSizeParam := r.URL.Query().Get("page_size")
-// 		pageSize, err := strconv.Atoi(pageSizeParam)
-// 		if err != nil || pageSize <= 0 {
-// 			http.Error(w, "Invalid parameter: page_size", http.StatusBadRequest)
-// 			return
-// 		}
-
-// 		var products []domain.Product
-// 		var nextTokenId string
-// 		// log.Println(fmt.Sprintf("%d %s %d %s %s", franchiseId, query, pageSize, pageToken, orderBy))
-// 		if query == "" {
-// 			// log.Println("List Products")
-// 			products, nextTokenId, err = s.ListProducts(franchiseId, pageSize, pageToken, orderBy)
-// 			// log.Println(err)
-// 		} else {
-// 			products, nextTokenId, err = s.SearchProducts(franchiseId, query, pageSize, pageToken, orderBy)
-// 			// log.Println(err)
-// 		}
-// 		// base64 encode the order_by field and nextTokenId into a single string
-// 		nextToken := base64.StdEncoding.EncodeToString([]byte(nextTokenId))
-
-// 		if err != nil {
-// 			http.Error(w, "Could not get products", http.StatusInternalServerError)
-// 			return
-// 		}
-// 		// Prepare and send the response
-// 		resp := response{
-// 			Products:      products,
-// 			NextPageToken: nextToken,
-// 		}
-// 		encode(w, r, http.StatusOK, resp)
-// 	}
-// }
-
-// func handleCreateOrder(s *storage.SQLStorage) http.HandlerFunc {
-// 	// Using domain.OrderRequest instead of request struct
-// 	// type request struct {
-// 	// 	Products []struct {
-// 	// 		ProductID int `json:"product_id"`
-// 	// 		Quantity  int `json:"quantity"`
-// 	// 	} `json:"products"`
-// 	// }
-// 	type response struct {
-// 		OrderID int  `json:"order_id"`
-// 		Success bool `json:"success"`
-// 	}
-// 	return func(w http.ResponseWriter, r *http.Request) {
-// 		roleIDValue := r.Context().Value("role")
-// 		roleIDFloat, ok := roleIDValue.(float64)
-// 		if !ok {
-// 			http.Error(w, "Cannot get role ID from JWT", http.StatusBadRequest)
-// 			return
-// 		}
-// 		role := int(roleIDFloat)
-
-// 		franchiseIDValue := r.Context().Value("franchise_id")
-// 		franchiseIDFloat, ok := franchiseIDValue.(float64)
-// 		if !ok {
-// 			http.Error(w, "Cannot get franchise ID from JWT", http.StatusBadRequest)
-// 			return
-// 		}
-// 		franchise_id := int(franchiseIDFloat)
-
-// 		franchiseeIDValue := r.Context().Value("franchisee_id")
-// 		franchiseeIDFloat, ok := franchiseeIDValue.(float64)
-// 		if !ok {
-// 			http.Error(w, "Cannot get franchisee ID from JWT", http.StatusBadRequest)
-// 			return
-// 		}
-// 		franchisee_id := int(franchiseeIDFloat)
-
-// 		appUserIDValue := r.Context().Value("app_user_id")
-// 		appUserIDFloat, ok := appUserIDValue.(float64)
-// 		if !ok {
-// 			http.Error(w, "Cannot get app user ID from JWT", http.StatusBadRequest)
-// 			return
-// 		}
-// 		app_user_id := int(appUserIDFloat)
-
-// 		//  Creator of order should be franchisee
-// 		if role == 3 || role == 2 {
-// 			http.Error(w, "Requires Franchisee Role", http.StatusUnauthorized)
-// 			return
-// 		}
-
-// 		order, err := decode[domain.OrderRequest](r)
-// 		if err != nil {
-// 			http.Error(w, "Invalid request payload", http.StatusBadRequest)
-// 			return
-// 		}
-
-// 		var order_id int
-// 		order_id, err = s.CreateOrder(app_user_id, franchise_id, franchisee_id, order.Products)
-// 		if err != nil {
-// 			log.Println(err)
-// 			http.Error(w, "Could not create order", http.StatusInternalServerError)
-// 			return
-// 		}
-// 		response := response{Success: true, OrderID: order_id}
-// 		encode(w, r, 200, response)
-// 	}
-// }
-
-// // func createFranchise(s *storage.SQLStorage) http.HandlerFunc {
-// // 	type response struct {
-// // 		id      string `json:"id"`
-// // 		success bool   `json:"success"`
-// // 	}
-// // 	return func(w http.ResponseWriter, r *http.Request) {
-// // 		franchise, err := decode[domain.Franchise](r)
-// // 		if err != nil {
-// // 			http.Error(w, "Invalid request payload", http.StatusBadRequest)
-// // 			return
-// // 		}
-// // 		err := s.createFranchise(franchise)
-// // 		if err != nil {
-// // 			http.Error(w, "Could not create franchise", http.StatusInternalServerError)
-// // 			return
-// // 		}
-// // 		w.write([]byte(fmt.Sprintf(`{"id": "%s"}`, franchise.Id)))
-// // 	}
-// // }
-
-// // func createOrder(s *storage.SQLStorage) http.HandlerFunc {
-// // 	type request struct {
-// // 		Products []string `json:"products"`
-// // 	}
-// // 	type response struct {
-// // 		OrderID string `json:"order_id"`
-// // 	}
-// // 	return func(w http.ResponseWriter, r *http.Request) {
-// // 		var req request
-// // 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-// // 			http.Error(w, "Invalid request payload", http.StatusBadRequest)
-// // 			return
-// // 		}
-// // 		// Assuming s.createOrder is a method that creates an order and returns an order ID
-// // 		orderID, err := s.CreateOrder(req.Products)
-// // 		if err != nil {
-// // 			http.Error(w, "Could not create order", http.StatusInternalServerError)
-// // 			return
-// // 		}
-// // 		resp := response{OrderID: orderID}
-// // 		w.Header().Set("Content-Type", "application/json")
-// // 		json.NewEncoder(w).Encode(resp)
-// // 	}
-// // }
+func getQueryWithDefault(q *url.Values, field string, fallback string) string {
+	val := q.Get(field)
+	if val == "" {
+		return fallback
+	} else {
+		return val
+	}
+}
 
 func decryptJWE(jwe string) (string, error) {
 	encKey := config.LoadConfigs().JWEKey
@@ -1336,4 +999,17 @@ func decryptJWE(jwe string) (string, error) {
 		return "", err
 	}
 	return string(decrypted), nil
+}
+
+func qbToE164Phone(phone string) (string, error) {
+	// Remove all non-digit characters
+	reg := regexp.MustCompile(`[^0-9]`)
+	cleaned := reg.ReplaceAllString(phone, "")
+
+	// Validate length (10 digits for US numbers)
+	if len(cleaned) != 10 {
+		return "", fmt.Errorf("invalid phone number length: got %d digits, want 10", len(cleaned))
+	}
+
+	return "+1" + cleaned, nil
 }

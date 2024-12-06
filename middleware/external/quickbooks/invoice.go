@@ -143,62 +143,6 @@ func (c *Client) CreateInvoice(realmID string, invoice *Invoice) (*Invoice, erro
 	return &resp.Invoice, nil
 }
 
-// DeleteInvoice deletes the invoice
-//
-// If the invoice was already deleted, QuickBooks returns 400 :(
-// The response looks like this:
-// {"Fault":{"Error":[{"Message":"Object Not Found","Detail":"Object Not Found : Something you're trying to use has been made inactive. Check the fields with accounts, invoices, items, vendors or employees.","code":"610","element":""}],"type":"ValidationFault"},"time":"2018-03-20T20:15:59.571-07:00"}
-//
-// This is slightly horrifying and not documented in their API. When this
-// happens we just return success; the goal of deleting it has been
-// accomplished, just not by us.
-
-// func (c *Client) DeleteInvoice(invoice *Invoice) error {
-// 	if invoice.Id == "" || invoice.SyncToken == "" {
-// 		return errors.New("missing id/sync token")
-// 	}
-
-// 	return c.post("invoice", invoice, nil, map[string]string{"operation": "delete"})
-// }
-
-// FindInvoices gets the full list of Invoices in the QuickBooks account.
-// func (c *Client) FindInvoices() ([]Invoice, error) {
-// 	var resp struct {
-// 		QueryResponse struct {
-// 			Invoices      []Invoice `json:"Invoice"`
-// 			MaxResults    int
-// 			StartPosition int
-// 			TotalCount    int
-// 		}
-// 	}
-
-// 	if err := c.query("SELECT COUNT(*) FROM Invoice", &resp); err != nil {
-// 		return nil, err
-// 	}
-
-// 	if resp.QueryResponse.TotalCount == 0 {
-// 		return nil, errors.New("no invoices could be found")
-// 	}
-
-// 	invoices := make([]Invoice, 0, resp.QueryResponse.TotalCount)
-
-// 	for i := 0; i < resp.QueryResponse.TotalCount; i += queryPageSize {
-// 		query := "SELECT * FROM Invoice ORDERBY Id STARTPOSITION " + strconv.Itoa(i+1) + " MAXRESULTS " + strconv.Itoa(queryPageSize)
-
-// 		if err := c.query(query, &resp); err != nil {
-// 			return nil, err
-// 		}
-
-// 		if resp.QueryResponse.Invoices == nil {
-// 			return nil, errors.New("no invoices could be found")
-// 		}
-
-// 		invoices = append(invoices, resp.QueryResponse.Invoices...)
-// 	}
-
-// 	return invoices, nil
-// }
-
 // // FindInvoiceById finds the invoice by the given id
 func (c *Client) FindInvoiceById(realmID string, id string) (*Invoice, error) {
 	var resp struct {
@@ -269,9 +213,7 @@ func (c *Client) VoidInvoice(realmID string, invoiceId string, syncToken string)
 	return c.post(realmID, "invoice", invoice, nil, map[string]string{"operation": "void"})
 }
 
-// QueryInvoices accepts an SQL query and returns all invoices found using it
-// No search query for this one
-func (c *Client) QueryInvoices(realmID string, orderBy string, pageSize string, pageToken string) (interface{}, error) {
+func (c *Client) QueryInvoices(realmID string, orderBy string, pageSize string, pageToken string, statuses string, id string) (interface{}, error) {
 	var resp struct {
 		QueryResponse struct {
 			// Getting custom struct here since we don't need "all" of the information in the list view
@@ -281,38 +223,47 @@ func (c *Client) QueryInvoices(realmID string, orderBy string, pageSize string, 
 				DocNumber   string        `json:"DocNumber,omitempty"`
 				TxnDate     Date          `json:"TxnDate,omitempty"`
 				TotalAmt    json.Number   `json:"TotalAmt,omitempty"`
+				Balance     json.Number   `json:"Balance,omitempty"`
 			} `json:"Invoice"`
 			StartPosition int
 			MaxResults    int
 		}
 	}
 
-	query := fmt.Sprintf("SELECT * FROM Invoice WHERE DocNumber LIKE 'P%%' ORDER BY %s MAXRESULTS %s STARTPOSITION %s", orderBy, pageSize, pageToken)
-	if err := c.query(realmID, query, &resp); err != nil {
-		return nil, err
+	query := "SELECT * FROM Invoice WHERE DocNumber > 'A'"
+	if id != "" {
+		query += fmt.Sprintf(" AND customerRef = '%s'", id)
 	}
-
-	return resp.QueryResponse.Invoices, nil
-}
-
-func (c *Client) QueryInvoicesCustomer(realmID string, orderBy string, pageSize string, pageToken string, customerId string) (interface{}, error) {
-	var resp struct {
-		QueryResponse struct {
-			// Getting custom struct here since we don't need "all" of the information in the list view
-			Invoices []struct {
-				Id          string        `json:"Id,omitempty"`
-				CustomerRef ReferenceType `json:"CustomerRef,omitempty"`
-				DocNumber   string        `json:"DocNumber,omitempty"`
-				TxnDate     Date          `json:"TxnDate,omitempty"`
-				TotalAmt    json.Number   `json:"TotalAmt,omitempty"`
-			} `json:"Invoice"`
-			StartPosition int
-			MaxResults    int
+	if statuses != "" {
+		// Constructs a wildcard mask for searching statuses that we want
+		// We get 21 characters for the DocNumber field
+		// Format is "APRVZ000-YYMMDDHHMMSS"
+		// A is a place holder to indicate that it's from our system
+		// P(pending), R(reviewed/approved), V(voided), Z(completed) are the statuses we want to search for: 1 for the current status, 0 if we don't
+		// For example, if we want want all statuses except voided we search for ... LIKE 'A%%0%000-%'
+		// - is a separator
+		// YYMMDDHHMMSS is the timestamp
+		// Should guarantee uniqueness for now, might need to change as we scale
+		p, r, v, z := "0", "0", "0", "0"
+		for i := 0; i < min(len(statuses), 4); i++ {
+			switch statuses[i] {
+			case 'P':
+				p = "%"
+			case 'R':
+				r = "%"
+			case 'V':
+				v = "%"
+			case 'Z':
+				z = "%"
+			}
 		}
+		query += fmt.Sprintf(" AND DocNumber LIKE 'A%s%s%s%s000-%%'", p, v, r, z)
 	}
 
-	query := fmt.Sprintf("SELECT * FROM Invoice WHERE DocNumber LIKE 'P%%' AND CustomerRef='%s' ORDER BY %s MAXRESULTS %s STARTPOSITION %s", customerId, orderBy, pageSize, pageToken)
+	query += fmt.Sprintf(" ORDER BY %s MAXRESULTS %s STARTPOSITION %s", orderBy, pageSize, pageToken)
+
 	log.Println(query)
+
 	if err := c.query(realmID, query, &resp); err != nil {
 		return nil, err
 	}

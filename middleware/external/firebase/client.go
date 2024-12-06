@@ -22,11 +22,13 @@ func NewClient(apiKey string) (*Client, error) {
 }
 
 // CreateUser creates a new user in Firebase.
-func (c *Client) SignUp(email string, password string) (CreateUserResponse, error) {
+func (c *Client) SignUp(email string, password string, phone string) (CreateUserResponse, error) {
 	url := "https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=" + c.apiKey
+	// TODO: phoneNumber doesn't work right now
 	params := map[string]string{
 		"email":             email,
 		"password":          password,
+		"phoneNumber":       phone,
 		"returnSecureToken": "true",
 	}
 

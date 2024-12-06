@@ -11,6 +11,8 @@ import (
 
 	firebase "firebase.google.com/go"
 
+	"github.com/twilio/twilio-go"
+
 	fb "github.com/Vertisphere/backend-service/external/firebase"
 	qb "github.com/Vertisphere/backend-service/external/quickbooks"
 	"github.com/Vertisphere/backend-service/internal/config"
@@ -67,12 +69,16 @@ func main() {
 		log.Fatalf("error initializing quickbooks client: %v\n", err)
 	}
 
+	// I guess twilio doesn't implement client initialization error handling? I guess you're just supposed to find out during runtime if you fucked up the initialization..
+	twilioClient := twilio.NewRestClient()
+
 	srv := mynet.NewServer(
 		ctx,
 		auth,
 		&store,
 		firebaseClient,
 		quickbooksClient,
+		twilioClient,
 	)
 
 	httpServer := &http.Server{

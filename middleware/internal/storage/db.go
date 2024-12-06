@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"os"
 
 	"github.com/Vertisphere/backend-service/internal/domain"
 
@@ -32,9 +31,7 @@ func (s *SQLStorage) Init(user, password, host, name string, usePrivate bool) er
 		}
 		var opts []cloudsqlconn.DialOption
 		// This is hardcoded to true for now. Not sure why we'll ever stop using vpc but if we do, we can change this
-		if os.Getenv("PRIVATE_IP") != "" {
-			opts = append(opts, cloudsqlconn.WithPrivateIP())
-		}
+		opts = append(opts, cloudsqlconn.WithPrivateIP())
 
 		dsn := fmt.Sprintf("user=%s database=%s", user, name)
 		config, err := pgx.ParseConfig(dsn)
