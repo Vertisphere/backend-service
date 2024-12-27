@@ -93,8 +93,7 @@ func (c *Client) QueryCustomers(realmID string, orderBy string, pageSize string,
 			MaxResults    int
 		}
 	}
-
-	query := fmt.Sprintf("SELECT * FROM Customer WHERE DisplayName LIKE '%%%s%%' orderBy %s MAXRESULTS %s STARTPOSITION %s", searchQuery, orderBy, pageSize, pageToken)
+	query := fmt.Sprintf("SELECT * FROM Customer WHERE %s orderBy %s MAXRESULTS %s STARTPOSITION %s", searchQuery, orderBy, pageSize, pageToken)
 	if err := c.query(realmID, query, &resp); err != nil {
 		return nil, err
 	}

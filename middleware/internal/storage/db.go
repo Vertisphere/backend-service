@@ -211,8 +211,8 @@ func (s SQLStorage) CreateCustomer(companyID string, customerID string, firebase
 	return nil
 }
 
-func (s SQLStorage) GetCustomerByFirebaseID(firebaseID string) (domain.Customer, error) {
-	var customer domain.Customer
+func (s SQLStorage) GetCustomerByFirebaseID(firebaseID string) (domain.DBCustomer, error) {
+	var customer domain.DBCustomer
 	domainQuery := "SELECT * FROM customer WHERE firebase_id = $1"
 	err := s.db.QueryRow(domainQuery, firebaseID).Scan(
 		&customer.QBCustomerID,
@@ -224,6 +224,47 @@ func (s SQLStorage) GetCustomerByFirebaseID(firebaseID string) (domain.Customer,
 		return customer, err
 	}
 	return customer, nil
+}
+
+func (s SQLStorage) GetCustomersLinkedStatuses(companyID string, customers *[]domain.Customer) []domain.Customer {
+	customerIDToIndex := make(map[string]int)
+	customerIDs := make([]string, len(*customers))
+
+	// Prepare the data structures
+	for i, customer := range *customers {
+		customerIDToIndex[customer.Customer.Id] = i
+		customerIDs[i] = customer.Customer.Id
+	}
+
+	// Single query using pgx.Array
+	rows, err := s.db.Query(
+		"SELECT qb_customer_id, qb_company_id, firebase_id, created_at FROM customer WHERE qb_company_id = $1 AND qb_customer_id = ANY($2)",
+		companyID,
+		customerIDs,
+	)
+	if err != nil {
+		return *customers
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var dbCustomer domain.DBCustomer
+		err := rows.Scan(
+			&dbCustomer.QBCustomerID,
+			&dbCustomer.QBCompanyID,
+			&dbCustomer.FirebaseID,
+			&dbCustomer.CreatedAt,
+		)
+		if err != nil {
+			continue
+		}
+
+		if idx, exists := customerIDToIndex[dbCustomer.QBCustomerID]; exists {
+			(*customers)[idx].DBCustomer = dbCustomer
+		}
+	}
+
+	return *customers
 }
 
 // func (s SQLStorage) CreateFranchise(admin_account_id string, franchise domain.Franchise) error {

@@ -31,7 +31,7 @@ func addRoutes(
 
 	// QBCustomers
 	mux.Handle("GET /qbCustomer/{id}", GetQBCustomer(qbc, storage))
-	mux.Handle("GET /qbCustomers", ListQBCustomers(qbc))
+	mux.Handle("GET /qbCustomers", ListQBCustomers(qbc, storage))
 
 	// QBInvoices
 	mux.Handle("GET /qbInvoice/{id}", GetQBInvoice(qbc))

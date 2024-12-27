@@ -217,9 +217,9 @@ func LoginQuickbooks(fbc *fb.Client, qbc *qb.Client, a *auth.Client, s *storage.
 	}
 }
 
-func ListQBCustomers(qbc *qb.Client) http.HandlerFunc {
+func ListQBCustomers(qbc *qb.Client, s *storage.SQLStorage) http.HandlerFunc {
 	type response struct {
-		Customers []qb.Customer `json:"customers"`
+		Customers []domain.Customer `json:"customers"`
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		// get claims from context
@@ -255,16 +255,26 @@ func ListQBCustomers(qbc *qb.Client) http.HandlerFunc {
 			pageToken = "1"
 		}
 		if query == "" {
-			query = ""
+			query = "DisplayName LIKE '%%'"
 		}
 		// Get Customers from QB
-		customers, err := qbc.QueryCustomers(claims.QBCompanyID, orderBy, pageSize, pageToken, query)
+		qbCustomers, err := qbc.QueryCustomers(claims.QBCompanyID, orderBy, pageSize, pageToken, query)
 		if err != nil {
 			http.Error(w, "Could not get customers", http.StatusInternalServerError)
 			return
 		}
+		// convert qbCustomers to customer type
+		customers := make([]domain.Customer, len(qbCustomers))
+
+		for i, qbCustomer := range qbCustomers {
+			customers[i] = domain.Customer{
+				Customer: qbCustomer,
+			}
+		}
+
+		customersWithFirebaseDetails := s.GetCustomersLinkedStatuses(claims.QBCompanyID, &customers)
 		// Write customers to response
-		resp := response{Customers: customers}
+		resp := response{Customers: customersWithFirebaseDetails}
 		encode(w, r, http.StatusOK, resp)
 	}
 }
@@ -507,6 +517,7 @@ func ListQBItems(qbc *qb.Client) http.HandlerFunc {
 			return
 		}
 		resp := response{Items: items}
+
 		encode(w, r, http.StatusOK, resp)
 	}
 }
