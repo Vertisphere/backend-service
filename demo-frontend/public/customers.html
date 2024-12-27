@@ -388,11 +388,11 @@
         // Modify your fetchCustomers function to include search
         async function fetchCustomers() {
             try {
-                const jwt = sessionStorage.getItem('jwt');
-                if (!jwt) {
-                    window.location.href = '/franchiser/login';
-                    return;
-                }
+                // const jwt = sessionStorage.getItem('jwt');
+                // if (!jwt) {
+                //     window.location.href = '/franchiser/login';
+                //     return;
+                // }
 
                 // Build URL with search query if it exists
                 let url = `http://localhost:8080/qbCustomers?page_size=${pageSize}&page_token=${currentPage}&order_by=GivenName desc`;

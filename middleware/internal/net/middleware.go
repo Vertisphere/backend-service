@@ -3,6 +3,7 @@ package net
 import (
 	"context"
 	"net/http"
+	"os"
 	"strings"
 
 	"firebase.google.com/go/auth"
@@ -48,7 +49,8 @@ func verifyToken(c *auth.Client, h http.Handler) http.Handler {
 
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
+		// TODO: clean this up
+		w.Header().Set("Access-Control-Allow-Origin", os.Getenv("CORS_ORIGIN"))
 		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PATCH, PUT, DELETE")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
