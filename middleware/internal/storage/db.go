@@ -211,6 +211,17 @@ func (s SQLStorage) CreateCustomer(companyID string, customerID string, firebase
 	return nil
 }
 
+// return firebase id
+func (s SQLStorage) DeleteCustomer(companyID string, customerID string) (string, error) {
+	var firebaseID string
+	query := "DELETE FROM customer WHERE qb_company_id = $1 AND qb_customer_id = $2 RETURNING firebase_id"
+	err := s.db.QueryRow(query, companyID, customerID).Scan(&firebaseID)
+	if err != nil {
+		return "", err
+	}
+	return firebaseID, nil
+}
+
 func (s SQLStorage) GetCustomerByFirebaseID(firebaseID string) (domain.DBCustomer, error) {
 	var customer domain.DBCustomer
 	domainQuery := "SELECT * FROM customer WHERE firebase_id = $1"

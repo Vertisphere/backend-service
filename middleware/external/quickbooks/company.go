@@ -5,23 +5,23 @@ package quickbooks
 
 // CompanyInfo describes a company account.
 type CompanyInfo struct {
-	CompanyName string
-	LegalName   string
+	CompanyName string `json:",omitempty"`
+	LegalName   string `json:",omitempty"`
 	// CompanyAddr
 	// CustomerCommunicationAddr
 	// LegalAddr
-	// PrimaryPhone
+	PrimaryPhone TelephoneNumber `json:",omitempty"`
 	// CompanyStartDate     Date
-	CompanyStartDate     string
-	FiscalYearStartMonth string
-	Country              string
+	CompanyStartDate     string `json:",omitempty"`
+	FiscalYearStartMonth string `json:",omitempty"`
+	Country              string `json:",omitempty"`
 	// Email
 	// WebAddr
-	SupportedLanguages string
+	SupportedLanguages string `json:",omitempty"`
 	// NameValue
-	Domain    string
-	Id        string
-	SyncToken string
+	Domain    string   `json:",omitempty"`
+	Id        string   `json:",omitempty"`
+	SyncToken string   `json:",omitempty"`
 	Metadata  MetaData `json:",omitempty"`
 }
 

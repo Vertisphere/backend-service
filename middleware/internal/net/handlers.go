@@ -1,6 +1,7 @@
 package net
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -132,20 +133,33 @@ func LoginQuickbooks(fbc *fb.Client, qbc *qb.Client, a *auth.Client, s *storage.
 			if err != nil {
 				phoneNumber = ""
 			}
+			var userFirebaseID string
 			createdUserResp, err := fbc.SignUp(userInfo.Email, encodedRealmID, phoneNumber)
+			userFirebaseID = createdUserResp.LocalId
 			if err != nil {
 				// TODO rollback transaction and delete firebase uesr
-				log.Println(err)
-				http.Error(w, "Could not create user", http.StatusInternalServerError)
-				return
+				log.Println(err.Error())
+				if err.Error() == "email already exists" {
+					// http.Error(w, "Email already exists", http.StatusBadRequest)
+					// Get Firebase id from email
+					user, err := a.GetUserByEmail(context.Background(), userInfo.Email)
+					userFirebaseID = user.UID
+					if err != nil {
+						http.Error(w, "User with Email exists and Could not get user by email", http.StatusInternalServerError)
+					}
+				} else {
+					http.Error(w, "Could not create user", http.StatusInternalServerError)
+					return
+				}
 			}
-			err = s.SetCompanyFirebaseID(req.RealmID, createdUserResp.LocalId)
+			err = s.SetCompanyFirebaseID(req.RealmID, userFirebaseID)
 			if err != nil {
 				// TODO rollback transaction and delete firebase user
+				log.Println(err.Error())
 				http.Error(w, "Could not link firebase ID of new user to company", http.StatusInternalServerError)
 				return
 			}
-			firebaseID = createdUserResp.LocalId
+			firebaseID = userFirebaseID
 		}
 		log.Println(firebaseID)
 
@@ -219,7 +233,8 @@ func LoginQuickbooks(fbc *fb.Client, qbc *qb.Client, a *auth.Client, s *storage.
 
 func ListQBCustomers(qbc *qb.Client, s *storage.SQLStorage) http.HandlerFunc {
 	type response struct {
-		Customers []domain.Customer `json:"customers"`
+		TotalCount int               `json:"total_count"`
+		Customers  []domain.Customer `json:"customers"`
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		// get claims from context
@@ -239,24 +254,17 @@ func ListQBCustomers(qbc *qb.Client, s *storage.SQLStorage) http.HandlerFunc {
 		// Get query params
 		q := r.URL.Query()
 		orderBy := getQueryWithDefault(&q, "order_by", "DisplayName ASC")
-		// pageSize := getQueryWithDefault(&q, "order_by", "")
-		// pageToken :=
-		// orderBy := r.URL.Query().Get("order_by")
-		pageSize := r.URL.Query().Get("page_size")
-		pageToken := r.URL.Query().Get("page_token")
-		query := r.URL.Query().Get("query")
-		if orderBy == "" {
-			orderBy = "DisplayName ASC"
+		pageSize := getQueryWithDefault(&q, "page_size", "10")
+		pageToken := getQueryWithDefault(&q, "page_token", "1")
+		query := getQueryWithDefault(&q, "query", "DisplayName LIKE '%%'")
+
+		// Get Total Count of query
+		totalCount, err := qbc.QueryCustomersCount(claims.QBCompanyID, query)
+		if err != nil {
+			http.Error(w, "Could not get customers (total count)", http.StatusInternalServerError)
+			return
 		}
-		if pageSize == "" {
-			pageSize = "10"
-		}
-		if pageToken == "" {
-			pageToken = "1"
-		}
-		if query == "" {
-			query = "DisplayName LIKE '%%'"
-		}
+
 		// Get Customers from QB
 		qbCustomers, err := qbc.QueryCustomers(claims.QBCompanyID, orderBy, pageSize, pageToken, query)
 		if err != nil {
@@ -274,7 +282,7 @@ func ListQBCustomers(qbc *qb.Client, s *storage.SQLStorage) http.HandlerFunc {
 
 		customersWithFirebaseDetails := s.GetCustomersLinkedStatuses(claims.QBCompanyID, &customers)
 		// Write customers to response
-		resp := response{Customers: customersWithFirebaseDetails}
+		resp := response{TotalCount: totalCount, Customers: customersWithFirebaseDetails}
 		encode(w, r, http.StatusOK, resp)
 	}
 }
@@ -294,6 +302,12 @@ func CreateCustomer(fbc *fb.Client, qbc *qb.Client, a *auth.Client, s *storage.S
 	return func(w http.ResponseWriter, r *http.Request) {
 		// get claims from context
 		claims := r.Context().Value("claims").(domain.Claims)
+		// user should be franchisor
+		if !claims.IsFranchiser {
+			http.Error(w, "No Access", http.StatusServiceUnavailable)
+			return
+		}
+
 		token, err := decryptJWE(claims.QBBearerToken)
 		if err != nil {
 			http.Error(w, "Could not decrypt QB token", http.StatusUnauthorized)
@@ -337,21 +351,25 @@ func CreateCustomer(fbc *fb.Client, qbc *qb.Client, a *auth.Client, s *storage.S
 		}
 		emailSetting := auth.ActionCodeSettings{
 			// URL: "https://backend-435201.firebaseapp.com",
-			URL: "http://localhost:3000/franchisee/login",
+			URL: fmt.Sprintf("%s/franchisee/dashboard", os.Getenv("CLIENT_ENDPOINT")),
 		}
 		// a.GetUser(r.Context(), uid.UID)
 		link, err := a.PasswordResetLinkWithSettings(r.Context(), req.CustomerEmail, &emailSetting)
-		log.Println(link)
+		if err != nil {
+			log.Println(err)
+			http.Error(w, "Could not create reset link", http.StatusInternalServerError)
+			return
+		}
 
 		// TODO: clean this shit up
-		from := mail.NewEmail("Ordrport Support", "sunny@vertisphere.io")
-		subject := "Password Reset for Ordrport"
-		to := mail.NewEmail("Example User", "sunghyoun@icloud.com")
-		plainTextContent := "and easy to do anywhere, even with Go"
+		from := mail.NewEmail("Ordrport Support", "verification@ordrport.com")
+		subject := "Reset your password for Ordrport"
+		// TODO: add forgot password flow
+		to := mail.NewEmail("Ordrport Franchisee", req.CustomerEmail)
+		plainTextContent := "Please reset your password for your Ordrport account"
 		htmlContent := link
 		message := mail.NewSingleEmail(from, subject, to, plainTextContent, htmlContent)
 		client := sendgrid.NewSendClient(os.Getenv("SENDGRID_API_KEY"))
-		log.Println(os.Getenv("SENDGRID_API_KEY"))
 		resp, err := client.Send(message)
 		if err != nil {
 			log.Println(err)
@@ -359,9 +377,8 @@ func CreateCustomer(fbc *fb.Client, qbc *qb.Client, a *auth.Client, s *storage.S
 		}
 		log.Println(resp)
 		// TODO: IS this 202?
-		if resp.StatusCode != http.StatusOK || resp.StatusCode != http.StatusAccepted {
+		if resp.StatusCode != http.StatusAccepted {
 			log.Println("reset email not sent")
-			// Actually it was
 			// TODO: should we delete this
 			// a.DeleteUser(r.Context(), createdUserResp.LocalId)
 		}
@@ -380,6 +397,46 @@ func CreateCustomer(fbc *fb.Client, qbc *qb.Client, a *auth.Client, s *storage.S
 		}
 
 		response := response{Success: true, ResetLink: link}
+		encode(w, r, 200, response)
+	}
+}
+
+func DeleteCustomer(a *auth.Client, s *storage.SQLStorage) http.HandlerFunc {
+	type request struct {
+		QBCustomerID string `json:"qb_customer_id"`
+	}
+	type response struct {
+		Success bool `json:"success"`
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		// get claims from context
+		claims := r.Context().Value("claims").(domain.Claims)
+		// User should be franchisor
+		if !claims.IsFranchiser {
+			http.Error(w, "No Access", http.StatusServiceUnavailable)
+			return
+		}
+		req, err := decode[request](r)
+		if err != nil {
+			http.Error(w, "Invalid request payload", http.StatusBadRequest)
+			return
+		}
+
+		firebaseID, err := s.DeleteCustomer(claims.QBCompanyID, req.QBCustomerID)
+		if err != nil {
+			log.Println(err)
+			http.Error(w, "Could not delete customer in db", http.StatusInternalServerError)
+			return
+		}
+
+		err = a.DeleteUser(r.Context(), firebaseID)
+		if err != nil {
+			log.Println(err)
+			http.Error(w, "Could not delete user in firebase", http.StatusInternalServerError)
+			return
+		}
+
+		response := response{Success: true}
 		encode(w, r, 200, response)
 	}
 }
@@ -474,7 +531,8 @@ func LoginCustomer(fbc *fb.Client, qbc *qb.Client, a *auth.Client, s *storage.SQ
 }
 func ListQBItems(qbc *qb.Client) http.HandlerFunc {
 	type response struct {
-		Items []qb.Item `json:"items"`
+		TotalCount int       `json:"total_count"`
+		Items      []qb.Item `json:"items"`
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		// get claims from context
@@ -486,42 +544,87 @@ func ListQBItems(qbc *qb.Client) http.HandlerFunc {
 		}
 		qbc.SetClient(qb.BearerToken{AccessToken: string(token)})
 		// Get query params
-		orderBy := r.URL.Query().Get("order_by")
-		pageSize := r.URL.Query().Get("page_size")
-		pageToken := r.URL.Query().Get("page_token")
-		query := r.URL.Query().Get("query")
-		if orderBy == "" {
-			orderBy = "Name ASC"
-		}
-		if pageSize == "" {
-			pageSize = "10"
-		}
-		if pageToken == "" {
-			pageToken = "1"
-		}
-		if query == "" {
-			query = ""
+		q := r.URL.Query()
+		orderBy := getQueryWithDefault(&q, "order_by", "Name ASC")
+		pageSize := getQueryWithDefault(&q, "page_size", "10")
+		pageToken := getQueryWithDefault(&q, "page_token", "1")
+		query := getQueryWithDefault(&q, "query", "Name LIKE '%%'")
+
+		totalCount, err := qbc.QueryItemsCount(claims.QBCompanyID, query)
+		if err != nil {
+			log.Println(err)
+			http.Error(w, "Could not get items (total count)", http.StatusInternalServerError)
+			return
 		}
 
 		items, err := qbc.QueryItems(claims.QBCompanyID, orderBy, pageSize, pageToken, query)
-		for _, item := range items {
-			// Check if item has field item.SalesTaxRef and then set to 1
-			// TODO: set to an actual default defined by franchiser in setting
-			// We're just making a guess here and assuming that there is a taxCode 1, but if there isn't, the invoice creation will fail....
-			if item.SalesTaxCodeRef.Value == "" {
-				item.SalesTaxCodeRef.Value = "1"
-			}
-		}
 		if err != nil {
 			http.Error(w, "Could not get items", http.StatusInternalServerError)
 			return
 		}
-		resp := response{Items: items}
 
+		resp := response{TotalCount: totalCount, Items: items}
 		encode(w, r, http.StatusOK, resp)
 	}
 }
-func CreateQBInvoice(qbc *qb.Client, twc *twilio.RestClient, a *auth.Client) http.HandlerFunc {
+
+func CreateQBInvoice(qbc *qb.Client) http.HandlerFunc {
+	type response struct {
+		Success bool   `json:"success"`
+		Id      string `json:"id"`
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		// get claims from context
+		claims := r.Context().Value("claims").(domain.Claims)
+		// Franchisers should not be able to create invoices
+		if claims.IsFranchiser {
+			http.Error(w, "No Access", http.StatusServiceUnavailable)
+			return
+		}
+		// Get QB token and set jwt for QB Client
+		token, err := decryptJWE(claims.QBBearerToken)
+		if err != nil {
+			http.Error(w, "Could not decrypt QB token", http.StatusUnauthorized)
+			return
+		}
+		qbc.SetClient(qb.BearerToken{AccessToken: string(token)})
+		// Create invoice order details
+		var lines []qb.Line
+		lines = append(lines, qb.Line{
+			DetailType:  "DescriptionOnly",
+			Description: "Ordrport Draft: Customer #" + claims.QBCustomerID,
+		})
+
+		// Set Docnumber and customer reference for invoice
+		invoice := &qb.Invoice{
+			Line:        lines,
+			CustomerRef: qb.ReferenceType{Value: claims.QBCustomerID},
+			DocNumber:   "A1000000-" + time.Now().Format("060102150405"),
+		}
+
+		// Get customer details
+		customer, err := qbc.GetCustomerById(claims.QBCompanyID, claims.QBCustomerID)
+		if err != nil {
+			log.Printf("%s", err)
+		}
+		if customer.PrimaryEmailAddr != nil && customer.PrimaryEmailAddr.Address != "" {
+			invoice.BillEmail = qb.EmailAddress{Address: customer.PrimaryEmailAddr.Address}
+		}
+
+		// Create Invoice and send
+		createdInvoice, err := qbc.CreateInvoice(claims.QBCompanyID, invoice)
+		if err != nil {
+			log.Println(err)
+			http.Error(w, "Could not create invoice", http.StatusInternalServerError)
+			return
+		}
+
+		resp := response{Success: true, Id: createdInvoice.Id}
+		encode(w, r, http.StatusOK, resp)
+	}
+}
+
+func UpdateQBInvoice(qbc *qb.Client) http.HandlerFunc {
 	// To be honest the only realk values we need from each item is the id, tax code, and price
 	// Maybe we should set the tax code to 0 when it's not set and then find the right values for it here?? TODO
 	type Line struct {
@@ -549,6 +652,25 @@ func CreateQBInvoice(qbc *qb.Client, twc *twilio.RestClient, a *auth.Client) htt
 			return
 		}
 		qbc.SetClient(qb.BearerToken{AccessToken: string(token)})
+
+		// get id from url
+		invoiceId := r.PathValue("id")
+		if invoiceId == "" {
+			http.Error(w, "No ID in URL", http.StatusBadRequest)
+			return
+		}
+		// Get invoice by ID
+		existingInvoice, err := qbc.FindInvoiceById(claims.QBCompanyID, invoiceId)
+		if err != nil {
+			http.Error(w, "Could not verify that invoice exists or is in draft status", http.StatusInternalServerError)
+			return
+		}
+		// Verify that the invoice status is currently in DRAFT
+		if qb.CheckInvoiceStatus(existingInvoice) != qb.INVOICE_DRAFT {
+			http.Error(w, "Invoice is not in draft status", http.StatusBadRequest)
+			return
+		}
+
 		// Decode request
 		req, err := decode[request](r)
 		if err != nil {
@@ -574,26 +696,659 @@ func CreateQBInvoice(qbc *qb.Client, twc *twilio.RestClient, a *auth.Client) htt
 				},
 			})
 		}
-		// Set Docnumber and customer reference for invoice
-		invoice := &qb.Invoice{
-			Line:        lines,
-			CustomerRef: qb.ReferenceType{Value: claims.QBCustomerID},
-			DocNumber:   "A1000000-" + time.Now().Format("060102150405"),
-			// We're going to assume that email is set for customer in qb
-			// In fact, I'm going to update the qb customer when we create the franchisee user
-			// BillEmail: qb.EmailAddress{Address: },
+		// slice old doc number and change status to reviewed
+		invoiceToUpdate := struct {
+			Id        string    `json:"Id"`
+			SyncToken string    `json:"SyncToken"`
+			Sparse    bool      `json:"sparse"`
+			Line      []qb.Line `json:"Line"`
+		}{
+			Id:        invoiceId,
+			SyncToken: existingInvoice.SyncToken,
+			Sparse:    true,
+			Line:      lines,
 		}
-		// Create Invoice and send
-		invoiceResp, err := qbc.CreateInvoice(claims.QBCompanyID, invoice)
+		_, err = qbc.UpdateInvoice(claims.QBCompanyID, invoiceToUpdate)
 		if err != nil {
 			log.Println(err)
-			http.Error(w, "Could not create invoice", http.StatusInternalServerError)
+			http.Error(w, "Could not update invoice", http.StatusInternalServerError)
+			return
+		}
+
+		resp := response{Success: true}
+		encode(w, r, http.StatusOK, resp)
+	}
+}
+
+func PublishQBInvoice(qbc *qb.Client, auth *auth.Client, twc *twilio.RestClient) http.HandlerFunc {
+	type response struct {
+		Success bool `json:"success"`
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		// get claims from context
+		claims := r.Context().Value("claims").(domain.Claims)
+		// Franchisers should not be able to create invoices
+		if claims.IsFranchiser {
+			http.Error(w, "No Access", http.StatusServiceUnavailable)
+			return
+		}
+		// Get QB token and set jwt for QB Client
+		token, err := decryptJWE(claims.QBBearerToken)
+		if err != nil {
+			http.Error(w, "Could not decrypt QB token", http.StatusUnauthorized)
+			return
+		}
+		qbc.SetClient(qb.BearerToken{AccessToken: string(token)})
+
+		// get id from url
+		invoiceId := r.PathValue("id")
+		if invoiceId == "" {
+			http.Error(w, "No ID in URL", http.StatusBadRequest)
+			return
+		}
+		// Get invoice by ID
+		existingInvoice, err := qbc.FindInvoiceById(claims.QBCompanyID, invoiceId)
+		if err != nil {
+			http.Error(w, "Could not verify that invoice exists or is in draft status", http.StatusInternalServerError)
+			return
+		}
+		// Verify that the invoice status is currently in DRAFT
+		if qb.CheckInvoiceStatus(existingInvoice) != qb.INVOICE_DRAFT {
+			http.Error(w, "Invoice is not in draft status", http.StatusBadRequest)
+			return
+		}
+		// slice old doc number and change status to reviewed
+		invoiceToUpdate := struct {
+			Id        string `json:"Id"`
+			SyncToken string `json:"SyncToken"`
+			Sparse    bool   `json:"sparse"`
+			DocNumber string `json:"DocNumber"`
+		}{
+			Id:        invoiceId,
+			SyncToken: existingInvoice.SyncToken,
+			Sparse:    true,
+			DocNumber: qb.ChangeInvoiceStatus(existingInvoice.DocNumber, qb.INVOICE_PENDING),
+		}
+		_, err = qbc.UpdateInvoice(claims.QBCompanyID, invoiceToUpdate)
+		if err != nil {
+			log.Println(err)
+			http.Error(w, "Could not update invoice", http.StatusInternalServerError)
 			return
 		}
 
 		resp := response{Success: true}
 		encode(w, r, http.StatusOK, resp)
 
+		// Messaging isn't as important so we send message after we send response
+		// TODO: add twilio sms messaging
+		// add twilio message
+		// Do we get the phone number from the customer or the user??? Going to be using firebase phone number for now
+		// Okay here's how we're setting priority:
+		// 1. Check MfaEnrollment PhoneNumber (aka the phone number set for MFA)
+		// if none exist then: 2. Check firebase.UserInfo.PhoneNumber (What got set when firebase account was created)
+		// if none exist then: 3. Check qb customer phone
+		// Get firebase user phone number
+		// user, err := a.GetUser(r.Context(), claims.FirebaseID)
+		// if err != nil {
+		// 	log.Println(err)
+		// }
+		// // TODO: implement get mfa enrollment in fbc
+		// // 1. get mfaInfo
+		// // phoneNumber := fbc.GetUserInfo.MfaEnrollment.PhoneNumber
+		// var phoneNumber string
+		// // 2.
+		// if phoneNumber == "" {
+		// 	phoneNumber = user.PhoneNumber
+		// }
+		// 3.
+
+		// get phone number for franchisor to send notification to
+		var phoneNumber string
+		franchisor, err := qbc.FindCompanyInfo(claims.QBCompanyID)
+		// get customer name
+		customer, err := qbc.GetCustomerById(claims.QBCompanyID, existingInvoice.CustomerRef.Value)
+		if err != nil {
+			log.Println("Could not get company or customer to send sms message for publish")
+			log.Printf("%s", err)
+		} else {
+			if phoneNumber == "" {
+				log.Println(phoneNumber)
+				phoneNumber, err = qbToE164Phone(franchisor.PrimaryPhone.FreeFormNumber)
+				if err != nil {
+					log.Printf("%s", err)
+				}
+			}
+		}
+
+		// TODO FOR Demo purpose
+		// if phoneNumber == "" {
+		// 	log.Println("No Phone number to send notification to. None sent.")
+		// 	return
+		// }
+		// TODO are all these phone number formats the same?
+		params := &twApi.CreateMessageParams{}
+		params.SetBody(fmt.Sprintf("An order with ID number %s has been published by franchisee: %s. For more details please visit: https://ordrport.com/franchisor/orders/pending-review", existingInvoice.Id, customer.DisplayName))
+		log.Println(phoneNumber)
+		params.SetFrom("+16478009984")
+		params.SetTo(phoneNumber)
+
+		twResp, err := twc.Api.CreateMessage(params)
+		if err != nil {
+			log.Printf("Could not send SMS message %s", err)
+		} else {
+			if twResp.Body != nil {
+				log.Println(*twResp.Body)
+			} else {
+				log.Println(twResp.Body)
+			}
+		}
+	}
+}
+
+func UnpublishQBInvoice(qbc *qb.Client, auth *auth.Client, twc *twilio.RestClient) http.HandlerFunc {
+	type response struct {
+		Success bool `json:"success"`
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		// get claims from context
+		claims := r.Context().Value("claims").(domain.Claims)
+		// Get QB token and set jwt for QB Client
+		token, err := decryptJWE(claims.QBBearerToken)
+		if err != nil {
+			http.Error(w, "Could not decrypt QB token", http.StatusUnauthorized)
+			return
+		}
+		qbc.SetClient(qb.BearerToken{AccessToken: string(token)})
+
+		// get id from url
+		invoiceId := r.PathValue("id")
+		if invoiceId == "" {
+			http.Error(w, "No ID in URL", http.StatusBadRequest)
+			return
+		}
+		// Get invoice by ID
+		existingInvoice, err := qbc.FindInvoiceById(claims.QBCompanyID, invoiceId)
+		if err != nil {
+			http.Error(w, "Could not verify that invoice exists or is in draft status", http.StatusInternalServerError)
+			return
+		}
+		// Verify that the invoice status is currently in PENDING
+		if qb.CheckInvoiceStatus(existingInvoice) != qb.INVOICE_PENDING {
+			http.Error(w, "Invoice is not in pending status", http.StatusBadRequest)
+			return
+		}
+		// slice old doc number and change status to reviewed
+		invoiceToUpdate := struct {
+			Id        string `json:"Id"`
+			SyncToken string `json:"SyncToken"`
+			Sparse    bool   `json:"sparse"`
+			DocNumber string `json:"DocNumber"`
+		}{
+			Id:        invoiceId,
+			SyncToken: existingInvoice.SyncToken,
+			Sparse:    true,
+			DocNumber: qb.ChangeInvoiceStatus(existingInvoice.DocNumber, qb.INVOICE_DRAFT),
+		}
+		_, err = qbc.UpdateInvoice(claims.QBCompanyID, invoiceToUpdate)
+		if err != nil {
+			log.Println(err)
+			http.Error(w, "Could not update invoice", http.StatusInternalServerError)
+			return
+		}
+
+		resp := response{Success: true}
+		encode(w, r, http.StatusOK, resp)
+		// Messaging isn't as important so we send message after we send response
+		// TODO: add twilio sms messaging
+		// add twilio message
+		// Do we get the phone number from the customer or the user??? Going to be using firebase phone number for now
+		// Okay here's how we're setting priority:
+		// 1. Check MfaEnrollment PhoneNumber (aka the phone number set for MFA)
+		// if none exist then: 2. Check firebase.UserInfo.PhoneNumber (What got set when firebase account was created)
+		// if none exist then: 3. Check qb customer phone
+		// Get firebase user phone number
+		// user, err := a.GetUser(r.Context(), claims.FirebaseID)
+		// if err != nil {
+		// 	log.Println(err)
+		// }
+		// // TODO: implement get mfa enrollment in fbc
+		// // 1. get mfaInfo
+		// // phoneNumber := fbc.GetUserInfo.MfaEnrollment.PhoneNumber
+		// var phoneNumber string
+		// // 2.
+		// if phoneNumber == "" {
+		// 	phoneNumber = user.PhoneNumber
+		// }
+		// // 3.
+
+		var phoneNumber string
+		customer, err := qbc.GetCustomerById(claims.QBCompanyID, existingInvoice.CustomerRef.Value)
+		if err != nil {
+			log.Println("Could not get customer to send sms message for unpublish")
+			log.Printf("%s", err)
+		} else {
+			log.Println(phoneNumber)
+			if phoneNumber == "" {
+				phoneNumber, err = qbToE164Phone(customer.PrimaryPhone.FreeFormNumber)
+				if customer.PrimaryPhone.FreeFormNumber == "" {
+					phoneNumber, err = qbToE164Phone(customer.Mobile.FreeFormNumber)
+				}
+				if customer.Mobile.FreeFormNumber == "" {
+					phoneNumber, err = qbToE164Phone(customer.AlternatePhone.FreeFormNumber)
+				}
+				if err != nil {
+					log.Printf("%s", err)
+				}
+			}
+		}
+
+		// TODO FOR Demo purpose
+		if phoneNumber == "" {
+			log.Println("No Phone number to send notification to. None sent.")
+			return
+		}
+		// TODO are all these phone number formats the same?
+		params := &twApi.CreateMessageParams{}
+		params.SetBody(fmt.Sprintf("An order with ID number %s has been rejected. For more details please visit: https://ordrport.com/franchisor/orders/pending-review", existingInvoice.Id))
+		log.Println(phoneNumber)
+		params.SetFrom("+16478009984")
+		params.SetTo(phoneNumber)
+
+		twResp, err := twc.Api.CreateMessage(params)
+		if err != nil {
+			log.Printf("Could not send SMS message %s", err)
+		} else {
+			if twResp.Body != nil {
+				log.Println(*twResp.Body)
+			} else {
+				log.Println(twResp.Body)
+			}
+		}
+	}
+}
+
+func ApproveQBInvoice(qbc *qb.Client, a *auth.Client, twc *twilio.RestClient) http.HandlerFunc {
+	type response struct {
+		Success bool `json:"success"`
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		// get claims from context
+		claims := r.Context().Value("claims").(domain.Claims)
+		// Franchisers should not be able to create invoices
+		if !claims.IsFranchiser {
+			http.Error(w, "No Access", http.StatusServiceUnavailable)
+			return
+		}
+		// Get QB token and set jwt for QB Client
+		token, err := decryptJWE(claims.QBBearerToken)
+		if err != nil {
+			http.Error(w, "Could not decrypt QB token", http.StatusUnauthorized)
+			return
+		}
+		qbc.SetClient(qb.BearerToken{AccessToken: string(token)})
+
+		// get id from url
+		invoiceId := r.PathValue("id")
+		if invoiceId == "" {
+			http.Error(w, "No ID in URL", http.StatusBadRequest)
+			return
+		}
+		// Get invoice by ID
+		existingInvoice, err := qbc.FindInvoiceById(claims.QBCompanyID, invoiceId)
+		if err != nil {
+			http.Error(w, "Could not verify that invoice exists or is in draft status", http.StatusInternalServerError)
+			return
+		}
+		// Verify that the invoice status is currently in PENDING
+		if qb.CheckInvoiceStatus(existingInvoice) != qb.INVOICE_PENDING {
+			http.Error(w, "Invoice is not in pending status", http.StatusBadRequest)
+			return
+		}
+		// slice old doc number and change status to reviewed
+		invoiceToUpdate := struct {
+			Id        string `json:"Id"`
+			SyncToken string `json:"SyncToken"`
+			Sparse    bool   `json:"sparse"`
+			DocNumber string `json:"DocNumber"`
+		}{
+			Id:        invoiceId,
+			SyncToken: existingInvoice.SyncToken,
+			Sparse:    true,
+			DocNumber: qb.ChangeInvoiceStatus(existingInvoice.DocNumber, qb.INVOICE_APPROVED),
+		}
+		_, err = qbc.UpdateInvoice(claims.QBCompanyID, invoiceToUpdate)
+		if err != nil {
+			log.Println(err)
+			http.Error(w, "Could not update invoice", http.StatusInternalServerError)
+			return
+		}
+
+		resp := response{Success: true}
+		encode(w, r, http.StatusOK, resp)
+		// Messaging isn't as important so we send message after we send response
+		// TODO: add twilio sms messaging
+		// add twilio message
+		// Do we get the phone number from the customer or the user??? Going to be using firebase phone number for now
+		// Okay here's how we're setting priority:
+		// 1. Check MfaEnrollment PhoneNumber (aka the phone number set for MFA)
+		// if none exist then: 2. Check firebase.UserInfo.PhoneNumber (What got set when firebase account was created)
+		// if none exist then: 3. Check qb customer phone
+		// Get firebase user phone number
+		// user, err := a.GetUser(r.Context(), claims.FirebaseID)
+		// if err != nil {
+		// 	log.Println(err)
+		// }
+		// TODO: implement get mfa enrollment in fbc
+		// 1. get mfaInfo
+		// phoneNumber := fbc.GetUserInfo.MfaEnrollment.PhoneNumber
+		var phoneNumber string
+		// 2.
+		// if phoneNumber == "" {
+		// 	phoneNumber = user.PhoneNumber
+		// }
+		// // 3.
+
+		customer, err := qbc.GetCustomerById(claims.QBCompanyID, existingInvoice.CustomerRef.Value)
+		if err != nil {
+			log.Printf("%s", err)
+		} else {
+			if phoneNumber == "" {
+				phoneNumber, err = qbToE164Phone(customer.PrimaryPhone.FreeFormNumber)
+				if customer.PrimaryPhone.FreeFormNumber == "" {
+					phoneNumber, err = qbToE164Phone(customer.Mobile.FreeFormNumber)
+				}
+				if customer.Mobile.FreeFormNumber == "" {
+					phoneNumber, err = qbToE164Phone(customer.AlternatePhone.FreeFormNumber)
+				}
+				if err != nil {
+					log.Printf("%s", err)
+				}
+			}
+		}
+
+		// TODO FOR Demo purpose
+		// if phoneNumber == "" {
+		// 	log.Println("No Phone number to send notification to. None sent.")
+		// 	return
+		// }
+		// TODO are all these phone number formats the same?
+		params := &twApi.CreateMessageParams{}
+		params.SetBody(fmt.Sprintf("Order #%s has been approved and is being prepared. For more details please visit: https://ordrport.com/franchisee/orders", invoiceId))
+		// Fuck it we hard code the phone number (for now)
+		params.SetFrom("+16478009984")
+		params.SetTo(phoneNumber)
+
+		twResp, err := twc.Api.CreateMessage(params)
+		if err != nil {
+			log.Printf("Could not send SMS message %s", err)
+		} else {
+			if twResp.Body != nil {
+				log.Println(*twResp.Body)
+			} else {
+				log.Println(twResp.Body)
+			}
+		}
+	}
+}
+
+func VoidQBInvoice(qbc *qb.Client, a *auth.Client, twc *twilio.RestClient) http.HandlerFunc {
+	type response struct {
+		Success bool `json:"success"`
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		// get claims from context
+		claims := r.Context().Value("claims").(domain.Claims)
+		// Franchisers should not be able to void invoices
+		if claims.IsFranchiser {
+			http.Error(w, "No Access", http.StatusServiceUnavailable)
+			return
+		}
+		// Get QB token and set jwt for QB Client
+		token, err := decryptJWE(claims.QBBearerToken)
+		if err != nil {
+			http.Error(w, "Could not decrypt QB token", http.StatusUnauthorized)
+			return
+		}
+		qbc.SetClient(qb.BearerToken{AccessToken: string(token)})
+
+		// get id from url
+		invoiceId := r.PathValue("id")
+		if invoiceId == "" {
+			http.Error(w, "No ID in URL", http.StatusBadRequest)
+			return
+		}
+		// Get invoice by ID
+		existingInvoice, err := qbc.FindInvoiceById(claims.QBCompanyID, invoiceId)
+		if err != nil {
+			http.Error(w, "Could not verify that invoice exists or is in draft status", http.StatusInternalServerError)
+			return
+		}
+		// Verify that the invoice status is currently in PENDING
+		if qb.CheckInvoiceStatus(existingInvoice) != qb.INVOICE_PENDING && qb.CheckInvoiceStatus(existingInvoice) != qb.INVOICE_DRAFT {
+			http.Error(w, "Invoice is not in pending or draft status", http.StatusBadRequest)
+			return
+		}
+		// slice old doc number and change status to voided
+		invoiceToUpdate := struct {
+			Id        string `json:"Id"`
+			SyncToken string `json:"SyncToken"`
+			Sparse    bool   `json:"sparse"`
+			DocNumber string `json:"DocNumber"`
+		}{
+			Id:        invoiceId,
+			SyncToken: existingInvoice.SyncToken,
+			Sparse:    true,
+			DocNumber: qb.ChangeInvoiceStatus(existingInvoice.DocNumber, qb.INVOICE_VOID),
+		}
+		updatedInvoice, err := qbc.UpdateInvoice(claims.QBCompanyID, invoiceToUpdate)
+		err = qbc.VoidInvoice(claims.QBCompanyID, updatedInvoice.Id, updatedInvoice.SyncToken)
+		if err != nil {
+			log.Println(err)
+			http.Error(w, "Could not void invoice", http.StatusInternalServerError)
+			return
+		}
+
+		resp := response{Success: true}
+		encode(w, r, http.StatusOK, resp)
+		// send twilio message that invoice has been voided
+		user, err := a.GetUser(r.Context(), claims.FirebaseID)
+		if err != nil {
+			log.Println(err)
+		}
+		var phoneNumber string
+		if phoneNumber == "" {
+			phoneNumber = user.PhoneNumber
+		}
+		customer, err := qbc.GetCustomerById(claims.QBCompanyID, existingInvoice.CustomerRef.Value)
+		if err != nil {
+			log.Printf("%s", err)
+		} else {
+			if phoneNumber == "" {
+				phoneNumber, err = qbToE164Phone(customer.PrimaryPhone.FreeFormNumber)
+				if customer.PrimaryPhone.FreeFormNumber == "" {
+					phoneNumber, err = qbToE164Phone(customer.Mobile.FreeFormNumber)
+				}
+				if customer.Mobile.FreeFormNumber == "" {
+					phoneNumber, err = qbToE164Phone(customer.AlternatePhone.FreeFormNumber)
+				}
+
+				if err != nil {
+					log.Printf("%s", err)
+				}
+			}
+		}
+
+		params := &twApi.CreateMessageParams{}
+		params.SetBody(fmt.Sprintf("Order %s has been voided by: %s. For more details please visit: https://ordrport.com/franchisee/invoices", customer.DisplayName, invoiceId))
+		params.SetFrom("+16478009984")
+		params.SetTo("+15062329415")
+
+		twResp, err := twc.Api.CreateMessage(params)
+		if err != nil {
+			log.Printf("Could not send SMS message %s", err)
+		} else {
+			if twResp.Body != nil {
+				log.Println(*twResp.Body)
+			} else {
+				log.Println(twResp.Body)
+			}
+		}
+	}
+}
+
+func DeleteQBInvoice(qbc *qb.Client, a *auth.Client, twc *twilio.RestClient) http.HandlerFunc {
+	type response struct {
+		Success bool `json:"success"`
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		// get claims from context
+		claims := r.Context().Value("claims").(domain.Claims)
+		// Franchisers should not be able to delete invoices
+		if claims.IsFranchiser {
+			http.Error(w, "No Access", http.StatusServiceUnavailable)
+			return
+		}
+		// Get QB token and set jwt for QB Client
+		token, err := decryptJWE(claims.QBBearerToken)
+		if err != nil {
+			http.Error(w, "Could not decrypt QB token", http.StatusUnauthorized)
+			return
+		}
+		qbc.SetClient(qb.BearerToken{AccessToken: string(token)})
+
+		// get id from url
+		invoiceId := r.PathValue("id")
+		if invoiceId == "" {
+			http.Error(w, "No ID in URL", http.StatusBadRequest)
+			return
+		}
+		// Get invoice by ID
+		existingInvoice, err := qbc.FindInvoiceById(claims.QBCompanyID, invoiceId)
+		if err != nil {
+			http.Error(w, "Could not verify that invoice exists or is in draft status", http.StatusInternalServerError)
+			return
+		}
+		// Verify that the invoice status is currently in DRAFT
+		if qb.CheckInvoiceStatus(existingInvoice) != qb.INVOICE_DRAFT {
+			http.Error(w, "Invoice is not in pending or draft status", http.StatusBadRequest)
+			return
+		}
+		err = qbc.VoidInvoice(claims.QBCompanyID, existingInvoice.Id, existingInvoice.SyncToken)
+		if err != nil {
+			log.Println(err)
+			http.Error(w, "Could not void invoice", http.StatusInternalServerError)
+			return
+		}
+
+		resp := response{Success: true}
+		encode(w, r, http.StatusOK, resp)
+		// send twilio message that invoice has been voided
+		user, err := a.GetUser(r.Context(), claims.FirebaseID)
+		if err != nil {
+			log.Println(err)
+		}
+		var phoneNumber string
+		if phoneNumber == "" {
+			phoneNumber = user.PhoneNumber
+		}
+		customer, err := qbc.GetCustomerById(claims.QBCompanyID, existingInvoice.CustomerRef.Value)
+		if err != nil {
+			log.Printf("%s", err)
+		} else {
+			if phoneNumber == "" {
+				phoneNumber, err = qbToE164Phone(customer.PrimaryPhone.FreeFormNumber)
+				if customer.PrimaryPhone.FreeFormNumber == "" {
+					phoneNumber, err = qbToE164Phone(customer.Mobile.FreeFormNumber)
+				}
+				if customer.Mobile.FreeFormNumber == "" {
+					phoneNumber, err = qbToE164Phone(customer.AlternatePhone.FreeFormNumber)
+				}
+
+				if err != nil {
+					log.Printf("%s", err)
+				}
+			}
+		}
+
+		params := &twApi.CreateMessageParams{}
+		params.SetBody(fmt.Sprintf("Order %s has been voided by: %s. For more details please visit: https://ordrport.com/franchisee/invoices", customer.DisplayName, invoiceId))
+		params.SetFrom("+16478009984")
+		params.SetTo("+15062329415")
+
+		twResp, err := twc.Api.CreateMessage(params)
+		if err != nil {
+			log.Printf("Could not send SMS message %s", err)
+		} else {
+			if twResp.Body != nil {
+				log.Println(*twResp.Body)
+			} else {
+				log.Println(twResp.Body)
+			}
+		}
+	}
+}
+
+func CompleteQBInvoice(qbc *qb.Client, a *auth.Client, twc *twilio.RestClient) http.HandlerFunc {
+	type response struct {
+		Success bool `json:"success"`
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		// get claims from context
+		claims := r.Context().Value("claims").(domain.Claims)
+		// Franchisers should not be able to complete invoices
+		if !claims.IsFranchiser {
+			http.Error(w, "No Access", http.StatusServiceUnavailable)
+			return
+		}
+		// Get QB token and set jwt for QB Client
+		token, err := decryptJWE(claims.QBBearerToken)
+		if err != nil {
+			http.Error(w, "Could not decrypt QB token", http.StatusUnauthorized)
+			return
+		}
+		qbc.SetClient(qb.BearerToken{AccessToken: string(token)})
+
+		// get id from url
+		invoiceId := r.PathValue("id")
+		if invoiceId == "" {
+			http.Error(w, "No ID in URL", http.StatusBadRequest)
+			return
+		}
+		// Get invoice by ID
+		existingInvoice, err := qbc.FindInvoiceById(claims.QBCompanyID, invoiceId)
+		if err != nil {
+			http.Error(w, "Could not verify that invoice exists or is in draft status", http.StatusInternalServerError)
+			return
+		}
+		// Verify that the invoice status is currently in APPROVED
+		if qb.CheckInvoiceStatus(existingInvoice) != qb.INVOICE_APPROVED {
+			http.Error(w, "Invoice is not in approved status", http.StatusBadRequest)
+			return
+		}
+		// slice old doc number and change status to completed
+		invoiceToUpdate := struct {
+			Id        string `json:"Id"`
+			SyncToken string `json:"SyncToken"`
+			Sparse    bool   `json:"sparse"`
+			DocNumber string `json:"DocNumber"`
+			DueDate   string `json:"DueDate"`
+		}{
+			Id:        invoiceId,
+			SyncToken: existingInvoice.SyncToken,
+			Sparse:    true,
+			DocNumber: qb.ChangeInvoiceStatus(existingInvoice.DocNumber, qb.INVOICE_COMPLETE),
+			// 2 weeks from now by default
+			DueDate: time.Now().AddDate(0, 0, 14).Format("2006-01-02"),
+		}
+		_, err = qbc.UpdateInvoice(claims.QBCompanyID, invoiceToUpdate)
+		if err != nil {
+			log.Println(err)
+			http.Error(w, "Could not update invoice", http.StatusInternalServerError)
+			return
+		}
+
+		resp := response{Success: true}
+		encode(w, r, http.StatusOK, resp)
 		// Messaging isn't as important so we send message after we send response
 		// TODO: add twilio sms messaging
 		// add twilio message
@@ -616,18 +1371,25 @@ func CreateQBInvoice(qbc *qb.Client, twc *twilio.RestClient, a *auth.Client) htt
 			phoneNumber = user.PhoneNumber
 		}
 		// 3.
-
-		customer, err := qbc.GetCustomerById(claims.QBCompanyID, claims.QBCustomerID)
+		customer, err := qbc.GetCustomerById(claims.QBCompanyID, existingInvoice.CustomerRef.Value)
 		if err != nil {
 			log.Printf("%s", err)
-		}
-		if phoneNumber == "" {
-			log.Println(customer.PrimaryPhone.FreeFormNumber)
-			phoneNumber, err = qbToE164Phone(customer.PrimaryPhone.FreeFormNumber)
-			if err != nil {
-				log.Printf("%s", err)
+		} else {
+			if phoneNumber == "" {
+				phoneNumber, err = qbToE164Phone(customer.PrimaryPhone.FreeFormNumber)
+				if customer.PrimaryPhone.FreeFormNumber == "" {
+					phoneNumber, err = qbToE164Phone(customer.Mobile.FreeFormNumber)
+				}
+				if customer.Mobile.FreeFormNumber == "" {
+					phoneNumber, err = qbToE164Phone(customer.AlternatePhone.FreeFormNumber)
+				}
+
+				if err != nil {
+					log.Printf("%s", err)
+				}
 			}
 		}
+
 		// TODO FOR Demo purpose
 		// if phoneNumber == "" {
 		// 	log.Println("No Phone number to send notification to. None sent.")
@@ -635,10 +1397,10 @@ func CreateQBInvoice(qbc *qb.Client, twc *twilio.RestClient, a *auth.Client) htt
 		// }
 		// TODO are all these phone number formats the same?
 		params := &twApi.CreateMessageParams{}
-		params.SetBody(fmt.Sprintf("A new order %s has been created by: %s. For more details please visit: https://ordrport.com/franchiser/invoices", customer.DisplayName, invoiceResp.Id))
+		params.SetBody(fmt.Sprintf("Order %s has been completed and is ready for pickup! To see the invoice, please visit: https://ordrport.com/franchisee/invoices/%s", invoiceId, invoiceId))
 		// Fuck it we hard code the phone number (for now)
 		params.SetFrom("+16478009984")
-		params.SetTo("+15062329415")
+		params.SetTo(phoneNumber)
 
 		twResp, err := twc.Api.CreateMessage(params)
 		if err != nil {
@@ -651,22 +1413,27 @@ func CreateQBInvoice(qbc *qb.Client, twc *twilio.RestClient, a *auth.Client) htt
 			}
 		}
 
+		// fuinally send email as well
+		if customer.PrimaryEmailAddr != nil && customer.PrimaryEmailAddr.Address != "" {
+			err = qbc.SendInvoice(claims.QBCompanyID, invoiceId, customer.PrimaryEmailAddr.Address)
+			if err != nil {
+				log.Println("Email couldn't be sent")
+			}
+		}
 	}
 }
 
-func UpdateQBInvoice(qbc *qb.Client, twc *twilio.RestClient) http.HandlerFunc {
-	type request struct {
-		Status string `json:"status"`
-	}
+func DuplicateQBInvoice(qbc *qb.Client) http.HandlerFunc {
 	type response struct {
-		Success bool `json:"success"`
+		Success bool   `json:"success"`
+		Id      string `json:"id"`
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		// get claims from context
 		claims := r.Context().Value("claims").(domain.Claims)
-		// Franchisee cannot review invoice
-		if !claims.IsFranchiser {
-			http.Error(w, "No access", http.StatusServiceUnavailable)
+		// Franchisers should not be able to create invoices
+		if claims.IsFranchiser {
+			http.Error(w, "No Access", http.StatusServiceUnavailable)
 			return
 		}
 		// Get QB token and set jwt for QB Client
@@ -675,162 +1442,59 @@ func UpdateQBInvoice(qbc *qb.Client, twc *twilio.RestClient) http.HandlerFunc {
 			http.Error(w, "Could not decrypt QB token", http.StatusUnauthorized)
 			return
 		}
-		qbc.SetClient(qb.BearerToken{AccessToken: string(token)})
 
 		invoiceId := r.PathValue("id")
 		if invoiceId == "" {
 			http.Error(w, "No id in url", http.StatusBadRequest)
 			return
 		}
-		req, err := decode[request](r)
-		if err != nil {
-			http.Error(w, "Invalid request payload", http.StatusBadRequest)
-			return
-		}
 
+		// Get invoice by ID
 		existingInvoice, err := qbc.FindInvoiceById(claims.QBCompanyID, invoiceId)
 		if err != nil {
-			http.Error(w, "Could not get invoice", http.StatusInternalServerError)
+			http.Error(w, "Could not verify that invoice exists or is in draft status", http.StatusInternalServerError)
 			return
 		}
 
-		if req.Status == "R" {
-			if len(existingInvoice.DocNumber) < 8 || existingInvoice.DocNumber[0:8] != "A1000000" {
-				http.Error(w, "Invoice is not in pending state. Verify that invoice has not been already been reviewed and was created from ordrport.", http.StatusBadRequest)
-				return
-			}
-			// Calculate the TxnDate and DueDate difference of existingInvoice
-			// Then take that difference and add it to the current date
-			newDueDate := time.Now().Add(existingInvoice.DueDate.Time.Sub(existingInvoice.TxnDate.Time))
-			log.Println(newDueDate)
-			// slice old doc number and change status to reviewed
-			newDocNumber := "A0100000-" + existingInvoice.DocNumber[10:]
-			invoiceToUpdate := struct {
-				Id        string `json:"Id"`
-				SyncToken string `json:"SyncToken"`
-				Sparse    bool   `json:"sparse"`
-				DocNumber string `json:"DocNumber"`
-				// DueDate   string `json:"DueDate"`
-			}{
-				Id:        invoiceId,
-				SyncToken: existingInvoice.SyncToken,
-				Sparse:    true,
-				DocNumber: newDocNumber,
-				// DueDate:   newDueDate.Format("2006-01-02"),
-			}
-			// TODO: Figure out why I'm getting null point on requests using INvoice struct
-			// For now just going to initialize my own
-			_, err := qbc.UpdateInvoice(claims.QBCompanyID, invoiceToUpdate, existingInvoice.SyncToken)
-			if err != nil {
-				log.Println(err)
-				http.Error(w, "Could not update invoice", http.StatusInternalServerError)
-				return
-			}
+		// Get existing invoice lines
 
-			// Send email and notification to customer
-			err = qbc.SendInvoice(claims.QBCompanyID, invoiceId, "")
-			if err != nil {
-				log.Println(err)
-				http.Error(w, "Could not send invoice", http.StatusInternalServerError)
-				return
-			}
-			params := &twApi.CreateMessageParams{}
-			params.SetBody(fmt.Sprintf("Order %s has been approved and is beginning preparation! For more details please visit: https://ordrport.com/franchisee/invoices", invoiceId))
-			// Fuck it we hard code the phone number (for now)
-			params.SetFrom("+16478009984")
-			params.SetTo("+15062329415")
+		qbc.SetClient(qb.BearerToken{AccessToken: string(token)})
+		// Create invoice order details
 
-			twResp, err := twc.Api.CreateMessage(params)
-			if err != nil {
-				log.Printf("Could not send SMS message %s", err)
-			} else {
-				if twResp.Body != nil {
-					log.Println(*twResp.Body)
-				} else {
-					log.Println(twResp.Body)
-				}
-			}
+		// Set Docnumber and customer reference for invoice
+		invoice := &qb.Invoice{
+			Line:        existingInvoice.Line,
+			CustomerRef: qb.ReferenceType{Value: claims.QBCustomerID},
+			DocNumber:   "A1000000-" + time.Now().Format("060102150405"),
+		}
 
-		} else if req.Status == "V" {
-			newDocNumber := "A0010000" + existingInvoice.DocNumber[10:]
-			invoiceToUpdate := struct {
-				Id        string `json:"Id"`
-				SyncToken string `json:"SyncToken"`
-				Sparse    bool   `json:"sparse"`
-				DocNumber string `json:"DocNumber"`
-			}{
-				Id:        invoiceId,
-				SyncToken: existingInvoice.SyncToken,
-				Sparse:    true,
-				DocNumber: newDocNumber,
-			}
-			log.Println(invoiceToUpdate)
-			updatedInvoice, err := qbc.UpdateInvoice(claims.QBCompanyID, &invoiceToUpdate, existingInvoice.SyncToken)
-			if err != nil {
-				log.Println(err)
-				http.Error(w, "Could not update invoice", http.StatusInternalServerError)
-				return
-			}
-			log.Println(updatedInvoice)
-			// void invoice
-			syncTokenInt, err := strconv.Atoi(existingInvoice.SyncToken)
-			if err != nil {
-				log.Println(err)
-				http.Error(w, "Could not convert SyncToken to int", http.StatusInternalServerError)
-				return
-			}
-			err = qbc.VoidInvoice(claims.QBCompanyID, invoiceId, strconv.Itoa(syncTokenInt+1))
-			if err != nil {
-				log.Println(err)
-				http.Error(w, "Could not void invoice", http.StatusInternalServerError)
-				return
-			}
-		} else if req.Status == "Z" {
-			if len(existingInvoice.DocNumber) < 8 || existingInvoice.DocNumber[0:8] != "A0100000" {
-				http.Error(w, "Invoice is not in pending state. Verify that invoice has not been already been reviewed and was created from ordrport.", http.StatusBadRequest)
-				return
-			}
-			// slice old doc number and change status to reviewed
-			newDocNumber := "A0001000-" + existingInvoice.DocNumber[10:]
-			invoiceToUpdate := struct {
-				Id        string `json:"Id"`
-				SyncToken string `json:"SyncToken"`
-				Sparse    bool   `json:"sparse"`
-				DocNumber string `json:"DocNumber"`
-			}{
-				Id:        invoiceId,
-				SyncToken: existingInvoice.SyncToken,
-				Sparse:    true,
-				DocNumber: newDocNumber,
-			}
-			// TODO: Figure out why I'm getting null point on requests using INvoice struct
-			// For now just going to initialize my own
-			_, err = qbc.UpdateInvoice(claims.QBCompanyID, invoiceToUpdate, existingInvoice.SyncToken)
-			if err != nil {
-				log.Println(err)
-				http.Error(w, "Could not update invoice", http.StatusInternalServerError)
-				return
-			}
+		// Get customer details
+		customer, err := qbc.GetCustomerById(claims.QBCompanyID, claims.QBCustomerID)
+		if err != nil {
+			log.Printf("%s", err)
+		}
+		if customer.PrimaryEmailAddr != nil && customer.PrimaryEmailAddr.Address != "" {
+			invoice.BillEmail = qb.EmailAddress{Address: customer.PrimaryEmailAddr.Address}
+		}
 
-			// Send email and notification to customer
-			err = qbc.SendInvoice(claims.QBCompanyID, invoiceId, "")
-			if err != nil {
-				log.Println(err)
-				http.Error(w, "Could not send invoice", http.StatusInternalServerError)
-				return
-			}
-
-		} else {
-			http.Error(w, "Invalid status", http.StatusBadRequest)
+		// Create Invoice and send
+		createdInvoice, err := qbc.CreateInvoice(claims.QBCompanyID, invoice)
+		if err != nil {
+			log.Println(err)
+			http.Error(w, "Could not create invoice", http.StatusInternalServerError)
 			return
 		}
-		// respond with 200
-		resp := response{Success: true}
+
+		resp := response{Success: true, Id: createdInvoice.Id}
 		encode(w, r, http.StatusOK, resp)
 	}
 }
 
 func ListQBInvoices(qbc *qb.Client) http.HandlerFunc {
+	type response struct {
+		TotalCount int                   `json:"total_count"`
+		Invoices   []qb.InvoiceTruncated `json:"invoices"`
+	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		// get claims from context
 		claims := r.Context().Value("claims").(domain.Claims)
@@ -842,36 +1506,33 @@ func ListQBInvoices(qbc *qb.Client) http.HandlerFunc {
 		}
 		qbc.SetClient(qb.BearerToken{AccessToken: string(token)})
 		// Get query params
-		orderBy := r.URL.Query().Get("order_by")
-		pageSize := r.URL.Query().Get("page_size")
-		pageToken := r.URL.Query().Get("page_token")
-		id := r.URL.Query().Get("id")
-		statuses := r.URL.Query().Get("statuses")
-		if orderBy == "" {
-			orderBy = "DocNumber ASC"
-		}
-		if pageSize == "" {
-			pageSize = "10"
-		}
-		if pageToken == "" {
-			pageToken = "1"
-		}
-		if statuses == "" {
-			statuses = "PRVZ"
-		}
+		q := r.URL.Query()
+		orderBy := getQueryWithDefault(&q, "order_by", "DocNumber ASC")
+		pageSize := getQueryWithDefault(&q, "page_size", "10")
+		pageToken := getQueryWithDefault(&q, "page_token", "1")
+		statuses := getQueryWithDefault(&q, "statuses", "DPARVC")
+		customerRef := r.URL.Query().Get("customer_ref")
+		query := getQueryWithDefault(&q, "query", "")
 		// Because quickbooks doesn't allow to query invoices by name directly, first get ids of customers based on query, and then get invoices for those customers
 		if !claims.IsFranchiser {
-			id = claims.QBCustomerID
+			customerRef = claims.QBCustomerID
 		}
 
-		invoices, err := qbc.QueryInvoices(claims.QBCompanyID, orderBy, pageSize, pageToken, statuses, id)
+		totalCount, err := qbc.QueryInvoicesCount(claims.QBCompanyID, statuses, customerRef, query)
+		if err != nil {
+			http.Error(w, "Could not get customers (total count)", http.StatusInternalServerError)
+			return
+		}
+
+		invoices, err := qbc.QueryInvoices(claims.QBCompanyID, orderBy, pageSize, pageToken, statuses, customerRef, query)
 		if err != nil {
 			log.Println(err)
 			http.Error(w, "Could not get invoices", http.StatusInternalServerError)
 			return
 		}
 
-		encode(w, r, http.StatusOK, invoices)
+		resp := response{TotalCount: totalCount, Invoices: invoices}
+		encode(w, r, http.StatusOK, resp)
 	}
 }
 
@@ -1018,9 +1679,12 @@ func qbToE164Phone(phone string) (string, error) {
 	cleaned := reg.ReplaceAllString(phone, "")
 
 	// Validate length (10 digits for US numbers)
-	if len(cleaned) != 10 {
-		return "", fmt.Errorf("invalid phone number length: got %d digits, want 10", len(cleaned))
+	if len(cleaned) == 10 {
+		return "+1" + cleaned, nil
+	}
+	if len(cleaned) == 11 && cleaned[0] == '1' {
+		return "+" + cleaned, nil
 	}
 
-	return "+1" + cleaned, nil
+	return "", fmt.Errorf("invalid phone number length: got %d digits, want 10", len(cleaned))
 }

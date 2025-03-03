@@ -47,6 +47,23 @@ func (c *Client) SignUp(email string, password string, phone string) (CreateUser
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		// read error response from firebase and log
+		var errorResponse map[string]interface{}
+		if err := json.NewDecoder(resp.Body).Decode(&errorResponse); err != nil {
+			log.Errorf("failed to decode error response from firebase: %v", err)
+		} else {
+			log.Errorf("firebase error response: %v", errorResponse)
+			log.Errorf("firebase error message: %v", errorResponse["error"])
+			errMap, _ := errorResponse["error"].(map[string]interface{})
+			log.Errorf("firebase error messagesd: %v", errMap)
+			if errMap, ok := errorResponse["error"].(map[string]interface{}); ok {
+				log.Errorf("%v", errMap)
+				log.Errorf("%v", errMap["message"])
+			}
+			if errMap, ok := errorResponse["error"].(map[string]interface{}); ok && errMap["message"] == "EMAIL_EXISTS" {
+				return CreateUserResponse{}, fmt.Errorf("email already exists")
+			}
+		}
 		return CreateUserResponse{}, fmt.Errorf("non 200 response code from Firebase %s", resp.Status)
 	}
 

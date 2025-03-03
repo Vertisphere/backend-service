@@ -84,6 +84,24 @@ func (c *Client) GetCustomerIdsByName(realmID string, name string) ([]string, er
 	return ids, nil
 }
 
+func (c *Client) QueryCustomersCount(realmID string, searchQuery string) (int, error) {
+	var resp struct {
+		QueryResponse struct {
+			TotalCount int `json:"totalCount"`
+		}
+	}
+	query := fmt.Sprintf("SELECT COUNT(*) FROM Customer WHERE %s", searchQuery)
+	if err := c.query(realmID, query, &resp); err != nil {
+		return 0, err
+	}
+
+	// if resp.QueryResponse.Customers == nil {
+	// 	return nil, errors.New("could not find any customers")
+	// }
+
+	return resp.QueryResponse.TotalCount, nil
+}
+
 // QueryCustomers accepts an SQL query and returns all customers found using it
 func (c *Client) QueryCustomers(realmID string, orderBy string, pageSize string, pageToken string, searchQuery string) ([]Customer, error) {
 	var resp struct {

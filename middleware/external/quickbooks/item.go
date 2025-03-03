@@ -52,6 +52,21 @@ func (c *Client) FindItemById(realmId string, id string) (*Item, error) {
 	return &resp.Item, nil
 }
 
+func (c *Client) QueryItemsCount(realmID string, searchQuery string) (int, error) {
+	var resp struct {
+		QueryResponse struct {
+			TotalCount int `json:"totalCount"`
+		}
+	}
+
+	query := fmt.Sprintf("SELECT COUNT(*) FROM Item WHERE Type='Inventory' AND %s", searchQuery)
+	if err := c.query(realmID, query, &resp); err != nil {
+		return 0, err
+	}
+
+	return resp.QueryResponse.TotalCount, nil
+}
+
 // QueryCustomers accepts an SQL query and returns all customers found using it
 func (c *Client) QueryItems(realmID string, orderBy string, pageSize string, pageToken string, searchQuery string) ([]Item, error) {
 	var resp struct {
@@ -63,7 +78,10 @@ func (c *Client) QueryItems(realmID string, orderBy string, pageSize string, pag
 	}
 
 	// ONLY INVENTORY ITEMS FOR NOW
-	query := fmt.Sprintf("SELECT * FROM Item WHERE Type='Inventory' AND Name LIKE '%%%s%%' orderBy %s MAXRESULTS %s STARTPOSITION %s", searchQuery, orderBy, pageSize, pageToken)
+
+	// Disabling inventory only for now since it requires plus and advanced plans https://qbo.intuit.com/app/obillupgrade?product=QBO
+	// query := fmt.Sprintf("SELECT * FROM Item WHERE Type='Inventory' AND %s orderBy %s MAXRESULTS %s STARTPOSITION %s", searchQuery, orderBy, pageSize, pageToken)
+	query := fmt.Sprintf("SELECT * FROM Item WHERE %s orderBy %s MAXRESULTS %s STARTPOSITION %s", searchQuery, orderBy, pageSize, pageToken)
 	if err := c.query(realmID, query, &resp); err != nil {
 		return nil, err
 	}

@@ -11,10 +11,11 @@ CREATE TABLE IF NOT EXISTS company (
 GRANT SELECT, INSERT, UPDATE, DELETE ON company TO PUBLIC;
 
 CREATE TABLE IF NOT EXISTS customer (
-    qb_customer_id VARCHAR(50) PRIMARY KEY,
+    qb_customer_id VARCHAR(50) NOT NULL,
     qb_company_id VARCHAR(50) REFERENCES company(qb_company_id),
-    firebase_id VARCHAR(50) UNIQUE NOT NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    firebase_id VARCHAR(50) NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (qb_customer_id, qb_company_id)
 );
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON customer TO PUBLIC;

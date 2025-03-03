@@ -14,6 +14,25 @@ import (
 	"net/url"
 )
 
+type InvoiceTruncated struct {
+	Id          string        `json:"Id,omitempty"`
+	CustomerRef ReferenceType `json:"CustomerRef,omitempty"`
+	DocNumber   string        `json:"DocNumber,omitempty"`
+	TxnDate     Date          `json:"TxnDate,omitempty"`
+	TotalAmt    json.Number   `json:"TotalAmt,omitempty"`
+	Balance     json.Number   `json:"Balance,omitempty"`
+}
+
+// ENUM of statuses
+const (
+	INVOICE_DRAFT    = iota + 1
+	INVOICE_PENDING  = iota + 1
+	INVOICE_APPROVED = iota + 1
+	INVOICE_REVISION = iota + 1
+	INVOICE_VOID     = iota + 1
+	INVOICE_COMPLETE = iota + 1
+)
+
 // Invoice represents a QuickBooks Invoice object.
 type Invoice struct {
 	Id            string        `json:"Id,omitempty"`
@@ -143,6 +162,21 @@ func (c *Client) CreateInvoice(realmID string, invoice *Invoice) (*Invoice, erro
 	return &resp.Invoice, nil
 }
 
+// CreateInvoiceWithLines creates the given Invoice on the QuickBooks server with the items on initialization, returning
+// the resulting Invoice object.
+func (c *Client) CreateInvoiceWithLines(realmID string, invoice *Invoice) (*Invoice, error) {
+	var resp struct {
+		Invoice Invoice
+		Time    Date
+	}
+
+	if err := c.post(realmID, "invoice", invoice, &resp, nil); err != nil {
+		return nil, err
+	}
+
+	return &resp.Invoice, nil
+}
+
 // // FindInvoiceById finds the invoice by the given id
 func (c *Client) FindInvoiceById(realmID string, id string) (*Invoice, error) {
 	var resp struct {
@@ -175,7 +209,7 @@ func (c *Client) SendInvoice(realmID string, invoiceId string, emailAddress stri
 
 // // UpdateInvoice updates the invoice
 // Usually you should know that you need to pass synctoken, so I'll leave a parameter to remind that
-func (c *Client) UpdateInvoice(realmID string, invoice interface{}, syncToken string) (*Invoice, error) {
+func (c *Client) UpdateInvoice(realmID string, invoice interface{}) (*Invoice, error) {
 
 	// invoice.SyncToken = syncToken
 
@@ -213,51 +247,119 @@ func (c *Client) VoidInvoice(realmID string, invoiceId string, syncToken string)
 	return c.post(realmID, "invoice", invoice, nil, map[string]string{"operation": "void"})
 }
 
-func (c *Client) QueryInvoices(realmID string, orderBy string, pageSize string, pageToken string, statuses string, id string) (interface{}, error) {
+func (c *Client) QueryInvoicesCount(realmID string, statuses string, customerRef string, searchQuery string) (int, error) {
+
 	var resp struct {
 		QueryResponse struct {
-			// Getting custom struct here since we don't need "all" of the information in the list view
-			Invoices []struct {
-				Id          string        `json:"Id,omitempty"`
-				CustomerRef ReferenceType `json:"CustomerRef,omitempty"`
-				DocNumber   string        `json:"DocNumber,omitempty"`
-				TxnDate     Date          `json:"TxnDate,omitempty"`
-				TotalAmt    json.Number   `json:"TotalAmt,omitempty"`
-				Balance     json.Number   `json:"Balance,omitempty"`
-			} `json:"Invoice"`
-			StartPosition int
-			MaxResults    int
+			TotalCount int
 		}
 	}
 
 	query := "SELECT * FROM Invoice WHERE DocNumber > 'A'"
-	if id != "" {
-		query += fmt.Sprintf(" AND customerRef = '%s'", id)
+	if customerRef != "" {
+		query += fmt.Sprintf(" AND customerRef = '%s'", customerRef)
 	}
 	if statuses != "" {
 		// Constructs a wildcard mask for searching statuses that we want
 		// We get 21 characters for the DocNumber field
-		// Format is "APRVZ000-YYMMDDHHMMSS"
+		// 	DRAFT    = iota + 1
+		// 	PENDING  = iota + 1
+		// 	APPROVED = iota + 1
+		// 	REVISION = iota + 1
+		// 	VOID     = iota + 1
+		// 	COMPLETE = iota + 1
+		// Format is "ADPARVC0-YYMMDDHHMMSS"
 		// A is a place holder to indicate that it's from our system
 		// P(pending), R(reviewed/approved), V(voided), Z(completed) are the statuses we want to search for: 1 for the current status, 0 if we don't
 		// For example, if we want want all statuses except voided we search for ... LIKE 'A%%0%000-%'
 		// - is a separator
 		// YYMMDDHHMMSS is the timestamp
 		// Should guarantee uniqueness for now, might need to change as we scale
-		p, r, v, z := "0", "0", "0", "0"
-		for i := 0; i < min(len(statuses), 4); i++ {
+		d, p, a, r, v, c := "0", "0", "0", "0", "0", "0"
+		for i := 0; i < min(len(statuses), 6); i++ {
 			switch statuses[i] {
+			case 'D':
+				d = "%"
 			case 'P':
 				p = "%"
+			case 'A':
+				a = "%"
 			case 'R':
 				r = "%"
 			case 'V':
 				v = "%"
-			case 'Z':
-				z = "%"
+			case 'C':
+				c = "%"
 			}
 		}
-		query += fmt.Sprintf(" AND DocNumber LIKE 'A%s%s%s%s000-%%'", p, v, r, z)
+		query += fmt.Sprintf(" AND DocNumber LIKE 'A%s%s%s%s%s%s0-%%'", d, p, a, r, v, c)
+
+		if searchQuery != "" {
+			query += fmt.Sprintf(" AND %s", searchQuery)
+		}
+	}
+
+	log.Println(query)
+
+	if err := c.query(realmID, query, &resp); err != nil {
+		return 0, err
+	}
+
+	return resp.QueryResponse.TotalCount, nil
+}
+
+func (c *Client) QueryInvoices(realmID string, orderBy string, pageSize string, pageToken string, statuses string, customerRef string, searchQuery string) ([]InvoiceTruncated, error) {
+	var resp struct {
+		QueryResponse struct {
+			Invoices      []InvoiceTruncated `json:"Invoice"`
+			StartPosition int
+			MaxResults    int
+		}
+	}
+
+	query := "SELECT * FROM Invoice WHERE DocNumber > 'A'"
+	if customerRef != "" {
+		query += fmt.Sprintf(" AND customerRef = '%s'", customerRef)
+	}
+
+	if statuses != "" {
+		// Constructs a wildcard mask for searching statuses that we want
+		// We get 21 characters for the DocNumber field
+		// 	DRAFT    = iota + 1
+		// 	PENDING  = iota + 1
+		// 	APPROVED = iota + 1
+		// 	REVISION = iota + 1
+		// 	VOID     = iota + 1
+		// 	COMPLETE = iota + 1
+		// Format is "ADPARVC0-YYMMDDHHMMSS"
+		// A is a place holder to indicate that it's from our system
+		// D(draft), P(pending), a(approved), R(revision/requires change), V(voided), C(completed) are the statuses we want to search for: 1 for the current status, 0 if we don't
+		// For example, if we want want all statuses except voided we search for ... LIKE 'A%%%%0%0-%'
+		// - is a separator
+		// YYMMDDHHMMSS is the timestamp
+		// Should guarantee uniqueness for now, might need to change as we scale
+		d, p, a, r, v, c := "0", "0", "0", "0", "0", "0"
+		for i := 0; i < min(len(statuses), 6); i++ {
+			switch statuses[i] {
+			case 'D':
+				d = "%"
+			case 'P':
+				p = "%"
+			case 'A':
+				a = "%"
+			case 'R':
+				r = "%"
+			case 'V':
+				v = "%"
+			case 'C':
+				c = "%"
+			}
+		}
+		query += fmt.Sprintf(" AND DocNumber LIKE 'A%s%s%s%s%s%s0-%%'", d, p, a, r, v, c)
+
+		if searchQuery != "" {
+			query += fmt.Sprintf(" AND %s", searchQuery)
+		}
 	}
 
 	query += fmt.Sprintf(" ORDER BY %s MAXRESULTS %s STARTPOSITION %s", orderBy, pageSize, pageToken)
@@ -311,4 +413,54 @@ func (c *Client) GetInvoicePDF(realmID string, invoiceId string) ([]byte, error)
 
 	// Take "%PDF-1.4\r\n...\r\n%%EOF" object and return it as content-type: application/pdf
 	return io.ReadAll(resp.Body)
+}
+
+func CheckInvoiceStatus(invoice *Invoice) int {
+	if invoice.DocNumber == "" {
+		return 0
+	}
+	if len(invoice.DocNumber) < 8 {
+		return 0
+	}
+	switch invoice.DocNumber[0:8] {
+	case "A1000000":
+		return INVOICE_DRAFT
+	case "A0100000":
+		return INVOICE_PENDING
+	case "A0010000":
+		return INVOICE_APPROVED
+	case "A0001000":
+		return INVOICE_REVISION
+	case "A0000100":
+		return INVOICE_VOID
+	case "A0000010":
+		return INVOICE_COMPLETE
+	default:
+		return 0
+	}
+}
+
+func ChangeInvoiceStatus(docNumber string, status int) string {
+	if docNumber == "" {
+		return ""
+	}
+	if len(docNumber) != 21 {
+		return ""
+	}
+	switch status {
+	case INVOICE_DRAFT:
+		return "A1000000-" + docNumber[9:]
+	case INVOICE_PENDING:
+		return "A0100000-" + docNumber[9:]
+	case INVOICE_APPROVED:
+		return "A0010000-" + docNumber[9:]
+	case INVOICE_REVISION:
+		return "A0001000-" + docNumber[9:]
+	case INVOICE_VOID:
+		return "A0000100-" + docNumber[9:]
+	case INVOICE_COMPLETE:
+		return "A0000010-" + docNumber[9:]
+	default:
+		return ""
+	}
 }
