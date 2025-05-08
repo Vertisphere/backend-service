@@ -11,11 +11,10 @@ env:
   IMAGE_NAME: ordrport-api
   TERRAFORM_REPO: vertisphere/terraform
   TERRAFORM_FILE_PATH_STAGE: ordrport-nonprod/CloudRunService.tf
-  DEPLOY_COMMAND: deploy to stage
 
 jobs:
   check-deploy-command:
-    if: github.event.issue.pull_request && contains(github.event.comment.body, '${{ env.DEPLOY_COMMAND }}')
+    if: github.event.issue.pull_request && contains(github.event.comment.body, 'deploy to stage')
     runs-on: ubuntu-latest
     outputs:
       pr_number: ${{ github.event.issue.number }}
