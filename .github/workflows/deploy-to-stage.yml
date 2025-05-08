@@ -1,0 +1,136 @@
+name: Deploy to Staging
+
+on:
+  issue_comment:
+    types: [created]
+
+env:
+  PROJECT_ID: ordrport-nonprod
+  REGION: us-central1
+  REPOSITORY: northamerica-northeast2-docker.pkg.dev/ordrport-nonprod/ordrport-nonprod-registry
+  IMAGE_NAME: ordrport-api
+  TERRAFORM_REPO: vertisphere/terraform
+  TERRAFORM_FILE_PATH_STAGE: ordrport-nonprod/CloudRunService.tf
+  DEPLOY_COMMAND: 'deploy to stage'
+
+jobs:
+  check-deploy-command:
+    if: github.event.issue.pull_request && contains(github.event.comment.body, env.DEPLOY_COMMAND)
+    runs-on: ubuntu-latest
+    outputs:
+      pr_number: ${{ github.event.issue.number }}
+    steps:
+      - run: echo "Deployment command detected"
+
+  build-and-deploy-to-stage:
+    needs: [check-deploy-command]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: 'write'
+      id-token: 'write'
+      pull-requests: 'write'
+      issues: 'write'
+    
+    steps:
+    - name: Get PR details
+      id: pr-details
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const pr = await github.rest.pulls.get({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            pull_number: ${{ needs.check-deploy-command.outputs.pr_number }}
+          });
+          return { ref: pr.data.head.ref, sha: pr.data.head.sha };
+        result-encoding: string
+        
+    - name: Checkout PR code
+      uses: actions/checkout@v3
+      with:
+        ref: ${{ fromJSON(steps.pr-details.outputs.result).ref }}
+      
+    - name: Google Auth
+      id: auth
+      uses: google-github-actions/auth@v1
+      with:
+        workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+        service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+        
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v2
+      
+    - name: Login to Artifact Registry
+      uses: docker/login-action@v2
+      with:
+        registry: ${{ env.REGION }}-docker.pkg.dev
+        username: _json_key
+        password: ${{ steps.auth.outputs.access_token }}
+        
+    - name: Build and push image
+      id: build-push
+      uses: docker/build-push-action@v4
+      with:
+        context: .
+        push: true
+        tags: "${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:stage-pr-${{ needs.check-deploy-command.outputs.pr_number }}"
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        
+    - name: Get image digest
+      id: image-digest
+      run: |
+        DIGEST=$(gcloud artifacts docker images describe \
+          ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}@${{ steps.build-push.outputs.digest }} \
+          --format='value(image_summary.fully_qualified_digest)')
+        echo "IMAGE_DIGEST=$DIGEST" >> $GITHUB_ENV
+        echo "IMAGE_DIGEST=$DIGEST" >> $GITHUB_OUTPUT
+        
+    - name: Checkout Terraform repo
+      uses: actions/checkout@v3
+      with:
+        repository: ${{ env.TERRAFORM_REPO }}
+        token: ${{ secrets.TERRAFORM_REPO_PAT }}
+        path: terraform-repo
+        
+    - name: Set up branch
+      run: |
+        cd terraform-repo
+        git checkout -b stage-deploy-pr-${{ needs.check-deploy-command.outputs.pr_number }}
+        
+    - name: Update Terraform file for staging
+      run: |
+        cd terraform-repo
+        # Update the image SHA in the staging Terraform file
+        sed -i 's|@sha256:[a-f0-9]\+|@'"$IMAGE_DIGEST"'|g' $TERRAFORM_FILE_PATH_STAGE
+        
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v2
+      with:
+        terraform_version: 1.0.0
+        
+    - name: Terraform Init and Apply
+      run: |
+        cd terraform-repo/$(dirname ${{ env.TERRAFORM_FILE_PATH_STAGE }})
+        terraform init
+        terraform apply -auto-approve
+        
+    - name: Commit and push changes
+      run: |
+        cd terraform-repo
+        git config user.name "GitHub Actions Bot"
+        git config user.email "actions@github.com"
+        git add ${{ env.TERRAFORM_FILE_PATH_STAGE }}
+        git commit -m "Deploy to staging from PR #${{ needs.check-deploy-command.outputs.pr_number }}"
+        git push origin stage-deploy-pr-${{ needs.check-deploy-command.outputs.pr_number }}
+        
+    - name: Comment on PR
+      uses: peter-evans/create-or-update-comment@v2
+      with:
+        issue-number: ${{ needs.check-deploy-command.outputs.pr_number }}
+        body: |
+          🚀 Deployed to staging environment!
+          
+          Image: ${{ env.IMAGE_DIGEST }}
+          
+          You can view the changes in the staging environment.
