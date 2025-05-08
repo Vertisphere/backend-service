@@ -11,7 +11,7 @@ env:
   IMAGE_NAME: ordrport-api
   TERRAFORM_REPO: vertisphere/terraform
   TERRAFORM_FILE_PATH_STAGE: ordrport-nonprod/CloudRunService.tf
-  DEPLOY_COMMAND: "/deploy-to-stage"
+  DEPLOY_COMMAND: 'deploy to stage'
 
 jobs:
   check-deploy-command:
