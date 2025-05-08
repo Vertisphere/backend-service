@@ -102,7 +102,7 @@ jobs:
       run: |
         cd terraform-repo
         # Update the image SHA in the staging Terraform file
-        sed -i 's|@sha256:[a-f0-9]\+|@'"$IMAGE_DIGEST"'|g' $TERRAFORM_FILE_PATH
+        sed -i 's|@sha256:[a-f0-9]\+|@'"$IMAGE_DIGEST"'|g' $TERRAFORM_FILE_PATH_STAGE
         
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v2
