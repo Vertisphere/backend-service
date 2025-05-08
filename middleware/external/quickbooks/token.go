@@ -8,7 +8,6 @@ import (
 	"errors"
 	"io"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"net/url"
 
@@ -73,7 +72,6 @@ func (c *Client) RetrieveBearerToken(authorizationCode string) (*BearerToken, er
 	// urlValues.Set("client_id", c.clientID)
 	// urlValues.Set("client_secret", c.clientSecret)
 
-	log.Println("urlValues", urlValues)
 	req, err := http.NewRequest("POST", c.discoveryAPI.TokenEndpoint, bytes.NewBufferString(urlValues.Encode()))
 	if err != nil {
 		return nil, err
