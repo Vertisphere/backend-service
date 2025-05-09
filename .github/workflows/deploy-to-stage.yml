@@ -9,7 +9,7 @@ env:
   REGION: northamerica-northeast2
   REPOSITORY: ordrport-nonprod/ordrport-nonprod-registry
   IMAGE_NAME: ordrport-api
-  TERRAFORM_REPO: vertisphere/terraform
+  TERRAFORM_REPO: vertisphere/ordrport-terraform
   TERRAFORM_FILE_PATH_STAGE: ordrport-nonprod/CloudRunService.tf
 
 jobs:
@@ -39,7 +39,7 @@ jobs:
     - name: Google Auth
       uses: google-github-actions/auth@v1
       with:
-        workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+        workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
         project_id: ${{ env.PROJECT_ID }}
         token_format: "access_token" # This is the key to direct resource access
         
