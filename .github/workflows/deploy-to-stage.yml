@@ -9,7 +9,7 @@ env:
   REGION: northamerica-northeast2
   REPOSITORY: ordrport-nonprod-registry
   IMAGE_NAME: ordrport-api
-  TERRAFORM_REPO: vertisphere/ordrport-terraform
+  TERRAFORM_REPO: Vertisphere/ordrport-terraform
   TERRAFORM_FILE_PATH_STAGE: ordrport-nonprod/CloudRunService.tf
 
 jobs:
@@ -70,11 +70,10 @@ jobs:
     - name: Get image digest
       id: image-digest
       run: |
-        DIGEST=$(gcloud artifacts docker images describe \
-          ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}@${{ steps.build-push.outputs.digest }} \
-          --format='value(image_summary.fully_qualified_digest)')
-        echo "IMAGE_DIGEST=$DIGEST" >> $GITHUB_ENV
-        echo "IMAGE_DIGEST=$DIGEST" >> $GITHUB_OUTPUT
+      # The full digest includes the registry path
+        FULL_DIGEST="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}@${{ steps.build-push.outputs.digest }}"
+        echo "IMAGE_DIGEST=$FULL_DIGEST" >> $GITHUB_ENV
+        echo "IMAGE_DIGEST=$FULL_DIGEST" >> $GITHUB_OUTPUT
         
     - name: Checkout Terraform repo
       uses: actions/checkout@v3
