@@ -70,7 +70,6 @@ jobs:
     - name: Get image digest
       id: image-digest
       run: |
-      # The full digest includes the registry path
         FULL_DIGEST="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}@${{ steps.build-push.outputs.digest }}"
         echo "IMAGE_DIGEST=$FULL_DIGEST" >> $GITHUB_ENV
         echo "IMAGE_DIGEST=$FULL_DIGEST" >> $GITHUB_OUTPUT
