@@ -49,7 +49,7 @@ jobs:
       uses: docker/login-action@v2
       with:
         registry: ${{ env.REGION }}-docker.pkg.dev
-        username: _json_key
+        username: oauth2accesstoken
         password: ${{ steps.auth.outputs.access_token }}
         
     - name: Build and push image
