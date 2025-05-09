@@ -30,6 +30,8 @@ jobs:
       image_digest: ${{ steps.image-digest.outputs.IMAGE_DIGEST }}
       
     steps:
+    # Techincally, the docker build push action does thi for us,
+    # but since we're working off a PR comment, we play it safe
     - name: Checkout code
       uses: actions/checkout@v3
       with:
@@ -57,7 +59,9 @@ jobs:
       id: build-push
       uses: docker/build-push-action@v4
       with:
-        context: .
+        context: ./middleware
+        file: ./middleware/Dockerfile
+        platforms: linux/amd64
         push: true
         tags: "${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:stage-pr-${{ github.event.issue.number }}"
         cache-from: type=gha
