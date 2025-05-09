@@ -18,6 +18,8 @@ import (
 	"github.com/Vertisphere/backend-service/internal/config"
 	mynet "github.com/Vertisphere/backend-service/internal/net"
 	"github.com/Vertisphere/backend-service/internal/storage"
+
+	"github.com/rs/zerolog"
 )
 
 func main() {
@@ -71,6 +73,10 @@ func main() {
 
 	// I guess twilio doesn't implement client initialization error handling? I guess you're just supposed to find out during runtime if you fucked up the initialization..
 	twilioClient := twilio.NewRestClient()
+
+	// init zerolog logger
+	logger := zerolog.New(os.Stdout).With().Timestamp().Logger()
+	ctx = context.WithValue(ctx, "logger", logger)
 
 	srv := mynet.NewServer(
 		ctx,

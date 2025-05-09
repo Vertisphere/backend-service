@@ -8,9 +8,10 @@ import (
 
 	"firebase.google.com/go/auth"
 	"github.com/Vertisphere/backend-service/internal/domain"
+	"github.com/google/uuid"
 )
 
-func verifyToken(c *auth.Client, h http.Handler) http.Handler {
+func authMiddleware(c *auth.Client, h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/franchiser/qbLogin" && r.Method == "POST" || r.URL.Path == "/franchisee/login" && r.Method == "POST" || r.URL.Path == "/" && r.Method == "GET" {
 			h.ServeHTTP(w, r)
@@ -59,6 +60,17 @@ func corsMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
+		next.ServeHTTP(w, r)
+	})
+}
+
+func traceMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Generate a unique trace ID for this request
+		traceID := uuid.New().String()
+		// Add trace ID to response headers
+		w.Header().Set("X-Trace-ID", traceID)
+		r = r.WithContext(context.WithValue(r.Context(), "traceID", traceID))
 		next.ServeHTTP(w, r)
 	})
 }

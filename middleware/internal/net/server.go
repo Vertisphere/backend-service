@@ -32,7 +32,8 @@ func NewServer(
 	)
 	var handler http.Handler = mux
 	// The later the middleware is added the earlier it is executed
-	handler = verifyToken(auth, handler)
+	handler = authMiddleware(auth, handler)
 	handler = corsMiddleware(handler)
+	handler = traceMiddleware(handler)
 	return handler
 }
