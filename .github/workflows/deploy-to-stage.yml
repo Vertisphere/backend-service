@@ -7,7 +7,7 @@ on:
 env:
   PROJECT_ID: ordrport-nonprod
   REGION: northamerica-northeast2
-  REPOSITORY: ordrport-nonprod/ordrport-nonprod-registry
+  REPOSITORY: ordrport-nonprod-registry
   IMAGE_NAME: ordrport-api
   TERRAFORM_REPO: vertisphere/ordrport-terraform
   TERRAFORM_FILE_PATH_STAGE: ordrport-nonprod/CloudRunService.tf
