@@ -7,7 +7,7 @@ on:
 env:
   PROJECT_ID: ordrport-nonprod
   REGION: northamerica-northeast2
-  REPOSITORY: ordrport-nonprod/ordrport-nonprod-registry
+  REPOSITORY: ordrport-nonprod-registry
   IMAGE_NAME: ordrport-api
   TERRAFORM_REPO: vertisphere/ordrport-terraform
   TERRAFORM_FILE_PATH_STAGE: ordrport-nonprod/CloudRunService.tf
@@ -64,10 +64,8 @@ jobs:
         platforms: linux/amd64
         push: true
         tags: "${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:stage-pr-${{ github.event.issue.number }}"
-        # disable cache for now
-        # cache-from: type=gha
-        # cache-to: type=gha,mode=max
-        no-cache: true
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
         
     - name: Get image digest
       id: image-digest
