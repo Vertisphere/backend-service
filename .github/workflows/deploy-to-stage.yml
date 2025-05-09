@@ -64,7 +64,8 @@ jobs:
         platforms: linux/amd64
         push: true
         tags: "${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:stage-pr-${{ github.event.issue.number }}"
-        cache-from: type=gha
+        # disable cache for now
+        # cache-from: type=gha
         cache-to: type=gha,mode=max
         
     - name: Get image digest
