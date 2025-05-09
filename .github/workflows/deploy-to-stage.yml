@@ -82,7 +82,7 @@ jobs:
         
     - name: Set up branch
       run: |
-        git checkout -b stage-deploy-pr-${{ needs.check-deploy-command.outputs.pr_number }}
+        git checkout -b stage-deploy-pr-${{ github.event.issue.number }}
         
     - name: Update Terraform file for staging
       run: |
@@ -111,7 +111,7 @@ jobs:
         body: |
           This PR updates the staging Cloud Run image from PR #${{ github.event.issue.number }}
           
-          Image: ${{ needs.build-push.outputs.image_digest }}
+          Image: ${{ github.event.issue.number }}
           
           Automated PR created by GitHub Actions.
         
