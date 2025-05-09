@@ -105,7 +105,7 @@ jobs:
         branch: stage-deploy-pr-${{ github.event.issue.number }}
         delete-branch: true
         base: main
-        title: "Deploy to staging from PR #${{ github.event.issue.number }}
+        title: "Deploy to staging from PR #${{ github.event.issue.number }}"
         body: |
           This PR updates the staging Cloud Run image from PR #${{ github.event.issue.number }}
           
