@@ -82,8 +82,8 @@ jobs:
         
     - name: Set up branch
       run: |
+        git fetch origin stage-deploy-pr-${{ github.event.issue.number }}:stage-deploy-pr-${{ github.event.issue.number }}
         git checkout -b stage-deploy-pr-${{ github.event.issue.number }}
-        git pull origin stage-deploy-pr-${{ github.event.issue.number }} --rebase || echo "No existing branch found, creating a new one"
         
     - name: Update Terraform file for staging
       run: |
