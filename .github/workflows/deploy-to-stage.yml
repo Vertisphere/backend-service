@@ -83,7 +83,7 @@ jobs:
     - name: Set up branch
       run: |
         git fetch origin stage-deploy-pr-${{ github.event.issue.number }}:stage-deploy-pr-${{ github.event.issue.number }}
-        git checkout -b stage-deploy-pr-${{ github.event.issue.number }}
+        git switch --create stage-deploy-pr-${{ github.event.issue.number }} || git switch stage-deploy-pr-${{ github.event.issue.number }}
         
     - name: Update Terraform file for staging
       run: |
@@ -110,7 +110,7 @@ jobs:
       run: |
         gh pr create \
           --title "Deploy to staging from PR #${{ github.event.issue.number }}" \
-          --body "${{ env.BODY }}" \ 
+          --body "${{ env.BODY }}" \
           --repo ${{ env.TERRAFORM_REPO }} \
           --head stage-deploy-pr-${{ github.event.issue.number }} \
           --base main
@@ -126,7 +126,7 @@ jobs:
           You can view the changes in the staging environment.
       run: |
         gh pr comment ${{ github.event.issue.number }} \
-          --body "${{ env.BODY }}" \ 
+          --body "${{ env.BODY }}" \
           --repo ${{ env.TERRAFORM_REPO }} \
 
     - name: Merge PR
