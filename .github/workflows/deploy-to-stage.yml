@@ -83,7 +83,7 @@ jobs:
     - name: Set up branch
       run: |
         git checkout -b stage-deploy-pr-${{ github.event.issue.number }}
-        git pull
+        git pull origin stage-deploy-pr-${{ github.event.issue.number }} || echo "No existing branch found, creating a new one"
         
     - name: Update Terraform file for staging
       run: |
@@ -95,7 +95,7 @@ jobs:
         git config user.name "GitHub Actions Bot"
         git config user.email "actions@github.com"
         git add ${{ env.TERRAFORM_FILE_PATH_STAGE }}
-        git commit -m "Deploy to staging from PR #${{ github.event.issue.number }}"
+        git commit -m "Deploy to staging from PR #${{ github.event.issue.number }} - ${{ github.run_id }}"
         git push origin stage-deploy-pr-${{ github.event.issue.number }}
         
     - name: Create Pull Request
