@@ -83,6 +83,7 @@ jobs:
     - name: Set up branch
       run: |
         git checkout -b stage-deploy-pr-${{ github.event.issue.number }}
+        git pull
         
     - name: Update Terraform file for staging
       run: |
