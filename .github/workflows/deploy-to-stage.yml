@@ -98,30 +98,18 @@ jobs:
         git push origin stage-deploy-pr-${{ github.event.issue.number }}
         
     - name: Create Pull Request
-      id: create-pr
-      uses: peter-evans/create-pull-request@v5
-      with:
-        token: ${{ secrets.TERRAFORM_REPO_PAT }}
-        path: .
-        commit-message: "Deploy to staging from PR #${{ github.event.issue.number }}"
-        branch: stage-deploy-pr-${{ github.event.issue.number }}
-        delete-branch: true
-        base: main
-        title: "Deploy to staging from PR #${{ github.event.issue.number }}"
-        body: |
-          This PR updates the staging Cloud Run image from PR #${{ github.event.issue.number }}
-          
-          Image: ${{ github.event.issue.number }}
-          
-          Automated PR created by GitHub Actions.
+      run: |
+        gh pr create \
+          --title "Deploy to staging from PR #${{ github.event.issue.number }}" \
+          --body "This PR updates the staging Cloud Run image from PR #${{ github.event.issue.number }}\n\nImage: ${{ github.event.issue.number }}\n\nAutomated PR created by GitHub Actions." \
+          --repo ${{ env.TERRAFORM_REPO }} \
+          --head stage-deploy-pr-${{ github.event.issue.number }} \
+          --base main \
+          --token ${{ secrets.TERRAFORM_REPO_PAT }}
         
     - name: Comment on PR
-      uses: peter-evans/create-or-update-comment@v2
-      with:
-        issue-number: ${{ github.event.issue.number }}
-        body: |
-          🚀 Deployed to staging environment!
-          
-          Image: ${{ env.IMAGE_DIGEST }}
-          
-          You can view the changes in the staging environment.
+      run: |
+        gh pr comment ${{ github.event.issue.number }} \
+          --body "🚀 Deployed to staging environment!\n\nImage: ${{ env.IMAGE_DIGEST }}\n\nYou can view the changes in the staging environment." \
+          --repo ${{ github.event.issue.repository.full_name }} \
+          --token ${{ secrets.GITHUB_TOKEN }}
