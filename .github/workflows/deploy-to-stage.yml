@@ -104,7 +104,12 @@ jobs:
       run: |
         gh pr create \
           --title "Deploy to staging from PR #${{ github.event.issue.number }}" \
-          --body "This PR updates the staging Cloud Run image from PR #${{ github.event.issue.number }}\n\nImage: ${{ github.event.issue.number }}\n\nAutomated PR created by GitHub Actions." \
+          --body | 
+            This PR updates the staging Cloud Run image from PR #${{ github.event.issue.number }}
+
+            Image: ${{ github.event.issue.number }}
+
+            Automated PR created by GitHub Actions.
           --repo ${{ env.TERRAFORM_REPO }} \
           --head stage-deploy-pr-${{ github.event.issue.number }} \
           --base main
@@ -114,5 +119,20 @@ jobs:
         GH_TOKEN: ${{ secrets.TERRAFORM_REPO_PAT }}
       run: |
         gh pr comment ${{ github.event.issue.number }} \
-          --body "🚀 Deployed to staging environment!\n\nImage: ${{ env.IMAGE_DIGEST }}\n\nYou can view the changes in the staging environment." \
-          --repo ${{ github.event.issue.repository.full_name }}
+          --body | 
+            🚀 Deployed to staging environment!
+
+            Image: ${{ env.IMAGE_DIGEST }}
+
+            You can view the changes in the staging environment.
+          --repo ${{ env.TERRAFORM_REPO }} \
+
+    - name: Merge PR
+      env:
+        GH_TOKEN: ${{ secrets.TERRAFORM_REPO_PAT }}
+      run: |
+        if gh pr merge ${{ github.event.issue.number }} --auto --repo ${{ env.TERRAFORM_REPO }}; then
+          echo "PR merged successfully"
+        else
+          echo "Checks have not passed, skipping merge"
+        fi
