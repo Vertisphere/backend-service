@@ -101,15 +101,16 @@ jobs:
     - name: Create Pull Request
       env:
         GH_TOKEN: ${{ secrets.TERRAFORM_REPO_PAT }}
+        BODY: |
+          This PR updates the staging Cloud Run image from PR #${{ github.event.issue.number }}
+
+          Image: ${{ env.IMAGE_DIGEST }}
+
+          Automated PR created by GitHub Actions.
       run: |
         gh pr create \
           --title "Deploy to staging from PR #${{ github.event.issue.number }}" \
-          --body | 
-            This PR updates the staging Cloud Run image from PR #${{ github.event.issue.number }}
-
-            Image: ${{ github.event.issue.number }}
-
-            Automated PR created by GitHub Actions.
+          --body "${{ env.BODY }}" \ 
           --repo ${{ env.TERRAFORM_REPO }} \
           --head stage-deploy-pr-${{ github.event.issue.number }} \
           --base main
@@ -117,14 +118,15 @@ jobs:
     - name: Comment on PR
       env:
         GH_TOKEN: ${{ secrets.TERRAFORM_REPO_PAT }}
+        BODY: |
+          🚀 Deployed to staging environment!
+
+          Image: ${{ env.IMAGE_DIGEST }}
+
+          You can view the changes in the staging environment.
       run: |
         gh pr comment ${{ github.event.issue.number }} \
-          --body | 
-            🚀 Deployed to staging environment!
-
-            Image: ${{ env.IMAGE_DIGEST }}
-
-            You can view the changes in the staging environment.
+          --body "${{ env.BODY }}" \ 
           --repo ${{ env.TERRAFORM_REPO }} \
 
     - name: Merge PR
