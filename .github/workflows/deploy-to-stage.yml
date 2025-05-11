@@ -115,20 +115,6 @@ jobs:
           --head stage-deploy-pr-${{ github.event.issue.number }} \
           --base main
 
-    - name: Comment on PR
-      env:
-        GH_TOKEN: ${{ secrets.TERRAFORM_REPO_PAT }}
-        BODY: |
-          🚀 Deployed to staging environment!
-
-          Image: ${{ env.IMAGE_DIGEST }}
-
-          You can view the changes in the staging environment.
-      run: |
-        gh pr comment ${{ github.event.issue.number }} \
-          --body "${{ env.BODY }}" \
-          --repo ${{ env.TERRAFORM_REPO }} \
-
     - name: Merge PR
       env:
         GH_TOKEN: ${{ secrets.TERRAFORM_REPO_PAT }}
@@ -137,4 +123,17 @@ jobs:
           echo "PR merged successfully"
         else
           echo "Checks have not passed, skipping merge"
+          exit 1
         fi
+
+    - name: Comment on PR
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{secrets.GITHUB_TOKEN}}
+        script: |
+          github.rest.issues.createComment({
+            issue_number: ${{ github.event.issue.number }},
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: "The image has been updated in the Terraform file. Please ensure the action on https://Vertisphere/ordrport-terraform has been completed to deploy the changes to staging."
+          })
