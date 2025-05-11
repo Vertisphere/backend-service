@@ -102,14 +102,14 @@ jobs:
       env:
         GH_TOKEN: ${{ secrets.TERRAFORM_REPO_PAT }}
         BODY: |
-          This PR updates the staging Cloud Run image from PR #${{ github.event.issue.number }}
+          This PR updates the staging Cloud Run image from PR #${{ github.event.issue.number }} - ${{ github.run_id }}.
 
           Image: ${{ env.IMAGE_DIGEST }}
 
           Automated PR created by GitHub Actions.
       run: |
         gh pr create \
-          --title "Deploy to staging from PR #${{ github.event.issue.number }}" \
+          --title "Deploy to staging from PR #${{ github.event.issue.number }} - ${{ github.run_id }}" \
           --body "${{ env.BODY }}" \
           --repo ${{ env.TERRAFORM_REPO }} \
           --head stage-deploy-pr-${{ github.event.issue.number }} \
