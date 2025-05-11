@@ -121,7 +121,7 @@ jobs:
       env:
         GH_TOKEN: ${{ secrets.TERRAFORM_REPO_PAT }}
       run: |
-        if gh pr merge stage-deploy-pr-${{ github.event.issue.number }} --auto --repo ${{ env.TERRAFORM_REPO }}; then
+        if gh pr merge stage-deploy-pr-${{ github.event.issue.number }} --merge --repo ${{ env.TERRAFORM_REPO }}; then
           echo "PR merged successfully"
         else
           echo "Checks have not passed, skipping merge"
