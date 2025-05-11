@@ -98,18 +98,20 @@ jobs:
         git push origin stage-deploy-pr-${{ github.event.issue.number }}
         
     - name: Create Pull Request
+      env:
+        GH_TOKEN: ${{ secrets.TERRAFORM_REPO_PAT }}
       run: |
         gh pr create \
           --title "Deploy to staging from PR #${{ github.event.issue.number }}" \
           --body "This PR updates the staging Cloud Run image from PR #${{ github.event.issue.number }}\n\nImage: ${{ github.event.issue.number }}\n\nAutomated PR created by GitHub Actions." \
           --repo ${{ env.TERRAFORM_REPO }} \
           --head stage-deploy-pr-${{ github.event.issue.number }} \
-          --base main \
-          --token ${{ secrets.TERRAFORM_REPO_PAT }}
-        
+          --base main
+
     - name: Comment on PR
+      env:
+        GH_TOKEN: ${{ secrets.TERRAFORM_REPO_PAT }}
       run: |
         gh pr comment ${{ github.event.issue.number }} \
           --body "🚀 Deployed to staging environment!\n\nImage: ${{ env.IMAGE_DIGEST }}\n\nYou can view the changes in the staging environment." \
-          --repo ${{ github.event.issue.repository.full_name }} \
-          --token ${{ secrets.GITHUB_TOKEN }}
+          --repo ${{ github.event.issue.repository.full_name }}
