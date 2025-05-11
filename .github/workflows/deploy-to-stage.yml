@@ -111,6 +111,8 @@ jobs:
         gh pr create \
           --title "Deploy to staging from PR #${{ github.event.issue.number }} - ${{ github.run_id }}" \
           --body "${{ env.BODY }}" \
+          --label "automation" \
+          --assignee "@me" \
           --repo ${{ env.TERRAFORM_REPO }} \
           --head stage-deploy-pr-${{ github.event.issue.number }} \
           --base main
