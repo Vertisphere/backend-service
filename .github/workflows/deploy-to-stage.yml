@@ -81,7 +81,7 @@ jobs:
         
     - name: Set up branch
       run: |
-        git fetch origin stage-deploy-pr-${{ github.event.issue.number }}:stage-deploy-pr-${{ github.event.issue.number }}
+        git fetch origin stage-deploy-pr-${{ github.event.issue.number }}:stage-deploy-pr-${{ github.event.issue.number }} || echo "Branch does not exist"
         git switch --create stage-deploy-pr-${{ github.event.issue.number }} || git switch stage-deploy-pr-${{ github.event.issue.number }}
         
     - name: Update Terraform file for staging

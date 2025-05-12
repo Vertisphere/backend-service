@@ -73,7 +73,7 @@ jobs:
         
     - name: Set up branch
       run: |
-        git fetch origin prod-deploy-pr-${{ github.event.pull_request.number }}:prod-deploy-pr-${{ github.event.pull_request.number }}
+        git fetch origin prod-deploy-pr-${{ github.event.pull_request.number }}:prod-deploy-pr-${{ github.event.pull_request.number }} || echo "Branch does not exist"
         git switch --create prod-deploy-pr-${{ github.event.pull_request.number }} || git switch prod-deploy-pr-${{ github.event.pull_request.number }}
         
     - name: Update Terraform file for prod
