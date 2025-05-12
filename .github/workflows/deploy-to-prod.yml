@@ -1,7 +1,8 @@
 name: Deploy to Prod
 
 on:
-  push:
+  pull_request:
+    types: [merged]
     branches:
       - main
 
@@ -11,16 +12,14 @@ env:
   REPOSITORY: ordrport-prod-registry
   IMAGE_NAME: ordrport-api
   TERRAFORM_REPO: Vertisphere/ordrport-terraform
-  TERRAFORM_FILE_PATH_STAGE: ordrport-prod/CloudRunService.tf
+  TERRAFORM_FILE_PATH_PROD: ordrport-prod/CloudRunService.tf
 
 jobs:
   # TODO: add concurrent check to ensure only one PR is open at a time
   build-and-deploy-to-prod:
     needs: [check-deploy-command]
     runs-on: ubuntu-latest
-    permissions:
-      contents: 'read'
-      id-token: 'write'
+    permissions: write-all
     outputs:
       image_digest: ${{ steps.image-digest.outputs.IMAGE_DIGEST }}
       
@@ -55,7 +54,7 @@ jobs:
         file: ./middleware/Dockerfile
         platforms: linux/amd64
         push: true
-        tags: "${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:stage-pr-${{ github.event.issue.number }}"
+        tags: "${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:prod-pr-${{ github.event.pull_request.number }}"
         cache-from: type=gha
         cache-to: type=gha,mode=max
         
@@ -74,46 +73,46 @@ jobs:
         
     - name: Set up branch
       run: |
-        git fetch origin stage-deploy-pr-${{ github.event.issue.number }}:stage-deploy-pr-${{ github.event.issue.number }}
-        git switch --create stage-deploy-pr-${{ github.event.issue.number }} || git switch stage-deploy-pr-${{ github.event.issue.number }}
+        git fetch origin prod-deploy-pr-${{ github.event.pull_request.number }}:prod-deploy-pr-${{ github.event.pull_request.number }}
+        git switch --create prod-deploy-pr-${{ github.event.pull_request.number }} || git switch prod-deploy-pr-${{ github.event.pull_request.number }}
         
-    - name: Update Terraform file for staging
+    - name: Update Terraform file for prod
       run: |
-        # Update the image SHA in the staging Terraform file
-        sed -i 's|@sha256:[a-f0-9]\+|@'"${IMAGE_DIGEST#*@}"'|g' ${{ env.TERRAFORM_FILE_PATH_STAGE }}
+        # Update the image SHA in the prod Terraform file
+        sed -i 's|@sha256:[a-f0-9]\+|@'"${IMAGE_DIGEST#*@}"'|g' ${{ env.TERRAFORM_FILE_PATH_PROD }}
         
     - name: Commit and push changes
       run: |
         git config user.name "GitHub Actions Bot"
         git config user.email "actions@github.com"
-        git add ${{ env.TERRAFORM_FILE_PATH_STAGE }}
-        git commit -m "Deploy to staging from PR #${{ github.event.issue.number }} - ${{ github.run_id }}"
-        git push origin stage-deploy-pr-${{ github.event.issue.number }}
+        git add ${{ env.TERRAFORM_FILE_PATH_PROD }}
+        git commit -m "Deploy to prod from PR #${{ github.event.pull_request.number }} - ${{ github.run_id }}"
+        git push origin prod-deploy-pr-${{ github.event.pull_request.number }}
         
     - name: Create Pull Request
       env:
         GH_TOKEN: ${{ secrets.TERRAFORM_REPO_PAT }}
         BODY: |
-          This PR updates the staging Cloud Run image from PR #${{ github.event.issue.number }} - ${{ github.run_id }}.
+          This PR updates the prod Cloud Run image from PR #${{ github.event.pull_request.number }} - ${{ github.run_id }}.
 
           Image: ${{ env.IMAGE_DIGEST }}
 
           Automated PR created by GitHub Actions.
       run: |
         gh pr create \
-          --title "Deploy to staging from PR #${{ github.event.issue.number }} - ${{ github.run_id }}" \
+          --title "Deploy to prod from PR #${{ github.event.pull_request.number }} - ${{ github.run_id }}" \
           --body "${{ env.BODY }}" \
           --label "automation" \
           --assignee "@me" \
           --repo ${{ env.TERRAFORM_REPO }} \
-          --head stage-deploy-pr-${{ github.event.issue.number }} \
+          --head prod-deploy-pr-${{ github.event.pull_request.number }} \
           --base main
 
     - name: Merge PR
       env:
         GH_TOKEN: ${{ secrets.TERRAFORM_REPO_PAT }}
       run: |
-        if gh pr merge stage-deploy-pr-${{ github.event.issue.number }} --merge --repo ${{ env.TERRAFORM_REPO }}; then
+        if gh pr merge prod-deploy-pr-${{ github.event.pull_request.number }} --merge --repo ${{ env.TERRAFORM_REPO }}; then
           echo "PR merged successfully"
         else
           echo "Checks have not passed, skipping merge"
@@ -127,8 +126,8 @@ jobs:
         github-token: ${{secrets.GITHUB_TOKEN}}
         script: |
           github.rest.issues.createComment({
-            issue_number: ${{ github.event.issue.number }},
+            issue_number: ${{ github.event.pull_request.number }},
             owner: context.repo.owner,
             repo: context.repo.repo,
-            body: "The image has been updated in the Terraform file. Please ensure the action on https://github.com/Vertisphere/ordrport-terraform has been completed to deploy the changes to staging."
+            body: "The image has been updated in the Terraform file. Please ensure the action on https://github.com/Vertisphere/ordrport-terraform has been completed to deploy the changes to prod."
           })
