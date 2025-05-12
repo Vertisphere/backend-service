@@ -136,5 +136,5 @@ jobs:
             issue_number: ${{ github.event.issue.number }},
             owner: context.repo.owner,
             repo: context.repo.repo,
-            body: "The image has been updated in the Terraform file. Please ensure the action on https://Vertisphere/ordrport-terraform has been completed to deploy the changes to staging."
+            body: "@${{ github.event.comment.user.login }} The image has been updated in the Terraform file. Please ensure the action on https://github.com/Vertisphere/ordrport-terraform/actions has been completed to deploy the changes to staging."
           })

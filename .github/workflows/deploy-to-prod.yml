@@ -1,0 +1,134 @@
+name: Deploy to Prod
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  PROJECT_ID: ordrport-prod
+  REGION: northamerica-northeast2
+  REPOSITORY: ordrport-prod-registry
+  IMAGE_NAME: ordrport-api
+  TERRAFORM_REPO: Vertisphere/ordrport-terraform
+  TERRAFORM_FILE_PATH_STAGE: ordrport-prod/CloudRunService.tf
+
+jobs:
+  # TODO: add concurrent check to ensure only one PR is open at a time
+  build-and-deploy-to-prod:
+    needs: [check-deploy-command]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+    outputs:
+      image_digest: ${{ steps.image-digest.outputs.IMAGE_DIGEST }}
+      
+    steps:
+    # Techincally, the docker build push action does thi for us,
+    # but since we're working off a PR comment, we play it safe
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Google Auth
+      id: google-auth
+      uses: google-github-actions/auth@v2
+      with:
+        project_id: ${{ env.PROJECT_ID }}
+        workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+        
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v2
+      
+    - name: Login to Artifact Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGION }}-docker.pkg.dev
+        username: oauth2accesstoken
+        password: ${{ steps.google-auth.outputs.auth_token }}
+        
+    - name: Build and push image
+      id: build-push
+      uses: docker/build-push-action@v4
+      with:
+        context: ./middleware
+        file: ./middleware/Dockerfile
+        platforms: linux/amd64
+        push: true
+        tags: "${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:stage-pr-${{ github.event.issue.number }}"
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        
+    - name: Get image digest
+      id: image-digest
+      run: |
+        FULL_DIGEST="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}@${{ steps.build-push.outputs.digest }}"
+        echo "IMAGE_DIGEST=$FULL_DIGEST" >> $GITHUB_ENV
+        echo "IMAGE_DIGEST=$FULL_DIGEST" >> $GITHUB_OUTPUT
+        
+    - name: Checkout Terraform repo
+      uses: actions/checkout@v3
+      with:
+        repository: ${{ env.TERRAFORM_REPO }}
+        token: ${{ secrets.TERRAFORM_REPO_PAT }}
+        
+    - name: Set up branch
+      run: |
+        git fetch origin stage-deploy-pr-${{ github.event.issue.number }}:stage-deploy-pr-${{ github.event.issue.number }}
+        git switch --create stage-deploy-pr-${{ github.event.issue.number }} || git switch stage-deploy-pr-${{ github.event.issue.number }}
+        
+    - name: Update Terraform file for staging
+      run: |
+        # Update the image SHA in the staging Terraform file
+        sed -i 's|@sha256:[a-f0-9]\+|@'"${IMAGE_DIGEST#*@}"'|g' ${{ env.TERRAFORM_FILE_PATH_STAGE }}
+        
+    - name: Commit and push changes
+      run: |
+        git config user.name "GitHub Actions Bot"
+        git config user.email "actions@github.com"
+        git add ${{ env.TERRAFORM_FILE_PATH_STAGE }}
+        git commit -m "Deploy to staging from PR #${{ github.event.issue.number }} - ${{ github.run_id }}"
+        git push origin stage-deploy-pr-${{ github.event.issue.number }}
+        
+    - name: Create Pull Request
+      env:
+        GH_TOKEN: ${{ secrets.TERRAFORM_REPO_PAT }}
+        BODY: |
+          This PR updates the staging Cloud Run image from PR #${{ github.event.issue.number }} - ${{ github.run_id }}.
+
+          Image: ${{ env.IMAGE_DIGEST }}
+
+          Automated PR created by GitHub Actions.
+      run: |
+        gh pr create \
+          --title "Deploy to staging from PR #${{ github.event.issue.number }} - ${{ github.run_id }}" \
+          --body "${{ env.BODY }}" \
+          --label "automation" \
+          --assignee "@me" \
+          --repo ${{ env.TERRAFORM_REPO }} \
+          --head stage-deploy-pr-${{ github.event.issue.number }} \
+          --base main
+
+    - name: Merge PR
+      env:
+        GH_TOKEN: ${{ secrets.TERRAFORM_REPO_PAT }}
+      run: |
+        if gh pr merge stage-deploy-pr-${{ github.event.issue.number }} --merge --repo ${{ env.TERRAFORM_REPO }}; then
+          echo "PR merged successfully"
+        else
+          echo "Checks have not passed, skipping merge"
+          exit 1
+        fi
+
+    - name: Comment on PR
+      uses: actions/github-script@v7
+      permissions: write-all
+      with:
+        github-token: ${{secrets.GITHUB_TOKEN}}
+        script: |
+          github.rest.issues.createComment({
+            issue_number: ${{ github.event.issue.number }},
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: "The image has been updated in the Terraform file. Please ensure the action on https://github.com/Vertisphere/ordrport-terraform has been completed to deploy the changes to staging."
+          })
