@@ -2,7 +2,7 @@ name: Deploy to Prod
 
 on:
   pull_request:
-    types: [merged]
+    types: [closed]
     branches:
       - main
 
@@ -17,7 +17,7 @@ env:
 jobs:
   # TODO: add concurrent check to ensure only one PR is open at a time
   build-and-deploy-to-prod:
-    needs: [check-deploy-command]
+    if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     permissions: write-all
     outputs:
