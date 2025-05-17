@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 )
@@ -299,8 +298,6 @@ func (c *Client) QueryInvoicesCount(realmID string, statuses string, customerRef
 		}
 	}
 
-	log.Println(query)
-
 	if err := c.query(realmID, query, &resp); err != nil {
 		return 0, err
 	}
@@ -364,8 +361,6 @@ func (c *Client) QueryInvoices(realmID string, orderBy string, pageSize string, 
 
 	query += fmt.Sprintf(" ORDER BY %s MAXRESULTS %s STARTPOSITION %s", orderBy, pageSize, pageToken)
 
-	log.Println(query)
-
 	if err := c.query(realmID, query, &resp); err != nil {
 		return nil, err
 	}
@@ -399,7 +394,6 @@ func (c *Client) GetInvoicePDF(realmID string, invoiceId string) ([]byte, error)
 	// req.Header.Add("Accept", "application/json")
 	req.Header.Add("Content-Type", "application/pdf")
 
-	log.Println(req)
 	resp, err := c.Client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to make request: %v", err)

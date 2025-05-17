@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"net/url"
 	"time"
@@ -51,7 +50,6 @@ func NewClient(clientID, clientSecret, redirectURI string, isProduction bool, mi
 	if err != nil {
 		return nil, err
 	}
-	log.Println(client.endpoint)
 	return &client, nil
 }
 
@@ -121,7 +119,6 @@ func (c *Client) req(realmID string, method string, endpoint string, payloadData
 		}
 	}
 
-	log.Println(string(marshalledJson))
 	req, err := http.NewRequest(method, endpointUrl.String(), bytes.NewBuffer(marshalledJson))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %v", err)
@@ -130,7 +127,6 @@ func (c *Client) req(realmID string, method string, endpoint string, payloadData
 	req.Header.Add("Accept", "application/json")
 	req.Header.Add("Content-Type", "application/json")
 
-	log.Println(req)
 	resp, err := c.Client.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to make request: %v", err)

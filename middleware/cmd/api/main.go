@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"sync"
@@ -19,41 +18,40 @@ import (
 	mynet "github.com/Vertisphere/backend-service/internal/net"
 	"github.com/Vertisphere/backend-service/internal/storage"
 
-	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 )
 
 func main() {
 	ctx := context.Background()
 	err := config.LoadEnv()
 	if err != nil {
-		log.Fatalf("error loading env: %v\n", err)
+		log.Fatal().Err(err).Msg("error loading env")
 	}
 	c := config.LoadConfigs()
 
 	app, err := firebase.NewApp(ctx, nil)
 	if err != nil {
-		log.Fatalf("error initializing app: %v\n", err)
+		log.Fatal().Err(err).Msg("error initializing app")
 	}
 	auth, err := app.Auth(ctx)
 	if err != nil {
-		log.Fatalf("error initializing google admin auth client: %v\n", err)
+		log.Fatal().Err(err).Msg("error initializing auth client")
 	}
 	// read from envar to Use cache or not to use cache
 	var store storage.SQLStorage
 	if c.UseCache == "true" {
-		log.Println("Using cache")
-		log.Fatalf("Cache not implemented")
+		log.Fatal().Msg("Cache not implemented")
 	} else {
-		log.Println("Not using cache")
+		log.Print("Not using cache")
 		log.Printf("User: %s, Host: %s, Name: %s", c.DB.User, c.DB.Host, c.DB.Name)
 		if c.Env == "prod" {
-			log.Println("Using prod db")
+			log.Print("Using prod db")
 			if err := store.Init(c.DB.User, c.DB.Password, c.DB.Host, c.DB.Name, true); err != nil {
-				log.Fatalf("error initializing storage: %v\n", err)
+				log.Fatal().Msg("error initializing storage")
 			}
 		} else {
 			if err := store.Init(c.DB.User, c.DB.Password, c.DB.Host, c.DB.Name, true); err != nil {
-				log.Fatalf("error initializing storage: %v\n", err)
+				log.Fatal().Msg("error initializing storage")
 			}
 		}
 	}
@@ -62,21 +60,17 @@ func main() {
 	// firebase client
 	firebaseClient, err := fb.NewClient(c.Firebase.APIKey)
 	if err != nil {
-		log.Fatalf("error initializing firebase client: %v\n", err)
+		log.Fatal().Msg("error initializing firebase client")
 	}
 
 	// quickbooksClient
 	quickbooksClient, err := qb.NewClient(c.Quickbooks.ClientID, c.Quickbooks.ClientSecret, c.Quickbooks.RedirectURI, c.Quickbooks.IsProduction, c.Quickbooks.MinorVersion)
 	if err != nil {
-		log.Fatalf("error initializing quickbooks client: %v\n", err)
+		log.Fatal().Msg("error initializing quickbooks client")
 	}
 
 	// I guess twilio doesn't implement client initialization error handling? I guess you're just supposed to find out during runtime if you fucked up the initialization..
 	twilioClient := twilio.NewRestClient()
-
-	// init zerolog logger
-	logger := zerolog.New(os.Stdout).With().Timestamp().Logger()
-	ctx = context.WithValue(ctx, "logger", logger)
 
 	srv := mynet.NewServer(
 		ctx,
