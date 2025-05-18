@@ -18,6 +18,7 @@ import (
 	mynet "github.com/Vertisphere/backend-service/internal/net"
 	"github.com/Vertisphere/backend-service/internal/storage"
 
+	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
 
@@ -71,6 +72,29 @@ func main() {
 
 	// I guess twilio doesn't implement client initialization error handling? I guess you're just supposed to find out during runtime if you fucked up the initialization..
 	twilioClient := twilio.NewRestClient()
+
+	// zero log for cloud run
+	zerolog.LevelFieldName = "severity"
+	zerolog.LevelFieldMarshalFunc = func(l zerolog.Level) string {
+		switch l {
+		case zerolog.DebugLevel:
+			return "DEBUG"
+		case zerolog.InfoLevel:
+			return "INFO"
+		case zerolog.WarnLevel:
+			return "WARNING"
+		case zerolog.ErrorLevel:
+			return "ERROR"
+		case zerolog.FatalLevel:
+			return "CRITICAL"
+		case zerolog.PanicLevel:
+			return "ALERT"
+		case zerolog.TraceLevel:
+			return "TRACE"
+		default:
+			return "UNKNOWN"
+		}
+	}
 
 	srv := mynet.NewServer(
 		ctx,

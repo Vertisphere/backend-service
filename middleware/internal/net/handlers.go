@@ -111,7 +111,11 @@ func LoginQuickbooks(fbc *fb.Client, qbc *qb.Client, a *auth.Client, s *storage.
 				logHttpError(err, "Could not create user in firebase", http.StatusInternalServerError, &w)
 				return
 			}
+
+			log.Debug().Interface("createdUser", createdUser).Msg("Created user in firebase")
+
 			firebaseID = createdUser.UID
+
 			// Create a new company in DB
 			err = s.CreateCompany(req.RealmID, req.AuthCode, bearerToken.AccessToken, bearerToken.ExpiresIn, bearerToken.RefreshToken, bearerToken.XRefreshTokenExpiresIn, firebaseID)
 			if err != nil {
