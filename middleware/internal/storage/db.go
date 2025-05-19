@@ -291,6 +291,21 @@ func (s SQLStorage) GetCustomerByFirebaseID(firebaseID string) (domain.DBCustome
 	return customer, nil
 }
 
+func (s SQLStorage) GetCustomerByQBID(qbID string) (domain.DBCustomer, error) {
+	var customer domain.DBCustomer
+	domainQuery := "SELECT * FROM customer WHERE qb_customer_id = $1"
+	err := s.db.QueryRow(domainQuery, qbID).Scan(
+		&customer.QBCustomerID,
+		&customer.QBCompanyID,
+		&customer.FirebaseID,
+		&customer.CreatedAt,
+	)
+	if err != nil {
+		return customer, err
+	}
+	return customer, nil
+}
+
 func (s SQLStorage) GetCustomersLinkedStatuses(companyID string, customers *[]domain.Customer) []domain.Customer {
 	customerIDToIndex := make(map[string]int)
 	customerIDs := make([]string, len(*customers))

@@ -3,59 +3,20 @@ package net
 import (
 	"encoding/base64"
 	"net/http"
+	"os"
 	"regexp"
-	"time"
 
-	qb "github.com/Vertisphere/backend-service/external/quickbooks"
 	"github.com/Vertisphere/backend-service/internal/config"
-	"github.com/Vertisphere/backend-service/internal/storage"
 	"github.com/rs/zerolog/log"
 	"gopkg.in/square/go-jose.v2"
+
+	"github.com/sendgrid/sendgrid-go"
+	"github.com/sendgrid/sendgrid-go/helpers/mail"
 )
 
 func logHttpError(err error, msg string, statusCode int, w *http.ResponseWriter) {
 	log.Error().Err(err).Msg(msg)
 	http.Error(*w, msg, statusCode)
-}
-
-func verifyRequest(r *http.Request, w *http.ResponseWriter) bool {
-	if r.Method != http.MethodPost {
-		logHttpError(nil, "Method not allowed", http.StatusMethodNotAllowed, w)
-		return false
-	}
-	if r.Header.Get("Content-Type") != "application/json" {
-		logHttpError(nil, "Unsupported Media Type", http.StatusUnsupportedMediaType, w)
-		return false
-	}
-	return true
-}
-
-func getBearerTokenFromDB(s *storage.SQLStorage, qbc *qb.Client, realmID string) (*qb.BearerToken, error) {
-	dbCompany, err := s.GetCompany(realmID)
-	if err != nil {
-		log.Error().Err(err).Msg("Could not get company from DB; may not exist")
-		return &qb.BearerToken{}, err
-	}
-
-	if !dbCompany.QBBearerTokenExpiry.Before(time.Now()) {
-		return &qb.BearerToken{
-			AccessToken:  dbCompany.QBBearerToken,
-			RefreshToken: dbCompany.QBRefreshToken,
-		}, nil
-	}
-
-	bearerToken, err := qbc.RefreshToken(dbCompany.QBRefreshToken)
-	if err != nil {
-		log.Error().Err(err).Msg("Could not make refresh token call to QB")
-		return &qb.BearerToken{}, err
-	}
-
-	err = s.UpdateTokenForCompany(realmID, bearerToken.AccessToken, bearerToken.ExpiresIn, bearerToken.RefreshToken, bearerToken.XRefreshTokenExpiresIn)
-	if err != nil {
-		log.Error().Err(err).Msg("Could insert updated refresh token into company in DB")
-		return &qb.BearerToken{}, err
-	}
-	return bearerToken, nil
 }
 
 func qbToE164Phone(phone string) string {
@@ -93,4 +54,36 @@ func encryptToken(token string) (string, error) {
 		return "", err
 	}
 	return encryptedToken, nil
+}
+
+// Send email via sendgrid
+func sendEmail(fromName string, toName string, email string, subject string, content *mail.Content, attachments []*mail.Attachment) {
+	// Initialize mail
+	m := mail.NewV3Mail()
+
+	from := mail.NewEmail(fromName, "verification@ordrport.com")
+	to := mail.NewEmail(toName, email)
+
+	m.SetFrom(from)
+	m.AddContent(content)
+
+	personalization := mail.NewPersonalization()
+	personalization.AddTos(to)
+	personalization.Subject = subject
+
+	for _, attachment := range attachments {
+		m.AddAttachment(attachment)
+	}
+
+	client := sendgrid.NewSendClient(os.Getenv("SENDGRID_API_KEY"))
+
+	resp, err := client.Send(m)
+	if err != nil {
+		log.Error().Err(err).Msg("error sending email")
+	}
+
+	// TODO: IS this 202?
+	if resp.StatusCode != http.StatusAccepted {
+		log.Error().Interface("response", resp).Msg("reset email wasn't a 202")
+	}
 }

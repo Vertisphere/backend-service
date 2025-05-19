@@ -1198,7 +1198,7 @@ func DeleteQBInvoice(qbc *qb.Client, a *auth.Client, twc *twilio.RestClient) htt
 	}
 }
 
-func CompleteQBInvoice(qbc *qb.Client, a *auth.Client, twc *twilio.RestClient) http.HandlerFunc {
+func CompleteQBInvoice(qbc *qb.Client, a *auth.Client, twc *twilio.RestClient, s *storage.SQLStorage) http.HandlerFunc {
 	type response struct {
 		Success bool `json:"success"`
 	}
@@ -1258,6 +1258,62 @@ func CompleteQBInvoice(qbc *qb.Client, a *auth.Client, twc *twilio.RestClient) h
 
 		resp := response{Success: true}
 		encode(w, r, http.StatusOK, resp)
+
+		// Send email with invoice
+		companyName := "OrdrPort Franchisor"
+		customerName := "Customer " + existingInvoice.CustomerRef.Name
+		log.Debug().Msg("Customer Name: " + existingInvoice.CustomerRef.Name)
+		customerEmail := existingInvoice.BillEmail.Address
+
+		// Get Customer information from QB
+		qbCustomer, qbErr := qbc.GetCustomerById(claims.QBCompanyID, existingInvoice.CustomerRef.Value)
+		if qbErr != nil {
+			log.Error().Err(qbErr).Msg("Could not get customer information from QB to send email")
+		} else {
+			companyName = qbCustomer.CompanyName
+			customerName = qbCustomer.DisplayName
+		}
+
+		// Get customer information from DB
+		dbCustomer, dbErr := s.GetCustomerByQBID(existingInvoice.CurrencyRef.Value)
+		if dbErr != nil {
+			log.Error().Err(dbErr).Msg("Could not get customer information from DB to send email")
+		} else {
+			fbCustomer, fbErr := a.GetUser(r.Context(), dbCustomer.FirebaseID)
+			if fbErr != nil {
+				log.Error().Err(fbErr).Msg("Could not get customer information from Firebase to send email")
+			} else {
+				customerEmail = fbCustomer.Email
+				// If we can't get the customer from QB, we use the customer from DB
+				if qbErr != nil {
+					customerName = fbCustomer.DisplayName
+				}
+			}
+		}
+
+		// Subject and content
+		subject := fmt.Sprintf("Your Order %s is Ready for Pickup!", invoiceId)
+		htmlContent := fmt.Sprintf("<html><body><h1>Hello %s,</h1><p>Your order %s is ready for pickup!</p><p>To see the invoice, please visit: <a href=\"https://ordrport.com/franchisee/invoices/%s\">Invoice</a></p><p>Thank you for using OrdrPort!</p><p>Best regards,<br>%s</p></body></html>", customerName, invoiceId, invoiceId, companyName)
+		content := mail.NewContent("text/html", htmlContent)
+
+		// Get Invoice PDF
+		a_pdf := mail.NewAttachment()
+		pdf, err := qbc.GetInvoicePDF(claims.QBCompanyID, invoiceId)
+		if err != nil {
+			logHttpError(err, "Could not get PDF", http.StatusInternalServerError, &w)
+			return
+		}
+		encoded := base64.StdEncoding.EncodeToString(pdf)
+		a_pdf.SetContent(encoded)
+		a_pdf.SetType("application/pdf")
+		a_pdf.SetFilename(fmt.Sprintf("Invoice_%s.pdf", invoiceId))
+		a_pdf.SetDisposition("attachment")
+
+		// Create attachments
+		attachments := []*mail.Attachment{a_pdf}
+
+		sendEmail(companyName, customerName, customerEmail, subject, content, attachments)
+
 		// Messaging isn't as important so we send message after we send response
 		// TODO: add twilio sms messaging
 		// add twilio message
@@ -1323,12 +1379,12 @@ func CompleteQBInvoice(qbc *qb.Client, a *auth.Client, twc *twilio.RestClient) h
 		}
 
 		// fuinally send email as well
-		if customer.PrimaryEmailAddr != nil && customer.PrimaryEmailAddr.Address != "" {
-			err = qbc.SendInvoice(claims.QBCompanyID, invoiceId, customer.PrimaryEmailAddr.Address)
-			if err != nil {
-				log.Error().Err(err).Msg("Email couldn't be sent")
-			}
-		}
+		// if customer.PrimaryEmailAddr != nil && customer.PrimaryEmailAddr.Address != "" {
+		// 	err = qbc.SendInvoice(claims.QBCompanyID, invoiceId, customer.PrimaryEmailAddr.Address)
+		// 	if err != nil {
+		// 		log.Error().Err(err).Msg("Email couldn't be sent")
+		// 	}
+		// }
 	}
 }
 
