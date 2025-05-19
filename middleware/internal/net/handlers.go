@@ -1275,7 +1275,7 @@ func CompleteQBInvoice(qbc *qb.Client, a *auth.Client, twc *twilio.RestClient, s
 		}
 
 		// Get customer information from DB
-		dbCustomer, dbErr := s.GetCustomerByQBID(existingInvoice.CurrencyRef.Value)
+		dbCustomer, dbErr := s.GetCustomerByQBID(existingInvoice.CustomerRef.Value)
 		if dbErr != nil {
 			log.Error().Err(dbErr).Msg("Could not get customer information from DB to send email")
 		} else {
