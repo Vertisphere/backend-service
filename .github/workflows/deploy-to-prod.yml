@@ -23,7 +23,17 @@ jobs:
     if: (github.event.issue.pull_request && contains(github.event.comment.body, 'deploy to prod')) || github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     steps:
+      - name: Set event number
+        id: set-number
+        run: |
+          if [[ "${{ github.event_name }}" == "issue_comment" ]]; then
+            echo "number=${{ github.event.issue.number }}" >> $GITHUB_OUTPUT
+          else
+            echo "number=${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+          fi
       - run: echo "Deployment command detected or PR merged"
+    outputs:
+      event_number: ${{ steps.set-number.outputs.number }}
 
   build-and-deploy-to-prod:
     needs: [check-deploy-command]
@@ -37,6 +47,8 @@ jobs:
     # but since we're working off a PR comment, we play it safe
     - name: Checkout code
       uses: actions/checkout@v3
+      with:
+        ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || 'main' }}
 
     - name: Google Auth
       id: google-auth
@@ -63,7 +75,7 @@ jobs:
         file: ./middleware/Dockerfile
         platforms: linux/amd64
         push: true
-        tags: "${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:prod-pr-${{ github.event.pull_request.number }}"
+        tags: "${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE_NAME }}:prod-pr-${{ needs.check-deploy-command.outputs.event_number }}"
         cache-from: type=gha
         cache-to: type=gha,mode=max
         
@@ -82,8 +94,8 @@ jobs:
         
     - name: Set up branch
       run: |
-        git fetch origin prod-deploy-pr-${{ github.event.pull_request.number }}:prod-deploy-pr-${{ github.event.pull_request.number }} || echo "Branch does not exist"
-        git switch --create prod-deploy-pr-${{ github.event.pull_request.number }} || git switch prod-deploy-pr-${{ github.event.pull_request.number }}
+        git fetch origin prod-deploy-pr-${{ needs.check-deploy-command.outputs.event_number }}:prod-deploy-pr-${{ needs.check-deploy-command.outputs.event_number }} || echo "Branch does not exist"
+        git switch --create prod-deploy-pr-${{ needs.check-deploy-command.outputs.event_number }} || git switch prod-deploy-pr-${{ needs.check-deploy-command.outputs.event_number }}
         
     - name: Update Terraform file for prod
       run: |
@@ -95,33 +107,33 @@ jobs:
         git config user.name "GitHub Actions Bot"
         git config user.email "actions@github.com"
         git add ${{ env.TERRAFORM_FILE_PATH_PROD }}
-        git commit -m "Deploy to prod from PR #${{ github.event.pull_request.number }} - ${{ github.run_id }}"
-        git push origin prod-deploy-pr-${{ github.event.pull_request.number }}
+        git commit -m "Deploy to prod from PR #${{ needs.check-deploy-command.outputs.event_number }} - ${{ github.run_id }}"
+        git push origin prod-deploy-pr-${{ needs.check-deploy-command.outputs.event_number }}
         
     - name: Create Pull Request
       env:
         GH_TOKEN: ${{ secrets.TERRAFORM_REPO_PAT }}
         BODY: |
-          This PR updates the prod Cloud Run image from PR #${{ github.event.pull_request.number }} - ${{ github.run_id }}.
+          This PR updates the prod Cloud Run image from PR #${{ needs.check-deploy-command.outputs.event_number }} - ${{ github.run_id }}.
 
           Image: ${{ env.IMAGE_DIGEST }}
 
           Automated PR created by GitHub Actions.
       run: |
         gh pr create \
-          --title "Deploy to prod from PR #${{ github.event.pull_request.number }} - ${{ github.run_id }}" \
+          --title "Deploy to prod from PR #${{ needs.check-deploy-command.outputs.event_number }} - ${{ github.run_id }}" \
           --body "${{ env.BODY }}" \
           --label "automation" \
           --assignee "@me" \
           --repo ${{ env.TERRAFORM_REPO }} \
-          --head prod-deploy-pr-${{ github.event.pull_request.number }} \
+          --head prod-deploy-pr-${{ needs.check-deploy-command.outputs.event_number }} \
           --base main
 
     - name: Merge PR
       env:
         GH_TOKEN: ${{ secrets.TERRAFORM_REPO_PAT }}
       run: |
-        if gh pr merge prod-deploy-pr-${{ github.event.pull_request.number }} --merge --repo ${{ env.TERRAFORM_REPO }}; then
+        if gh pr merge prod-deploy-pr-${{ needs.check-deploy-command.outputs.event_number }} --merge --repo ${{ env.TERRAFORM_REPO }}; then
           echo "PR merged successfully"
         else
           echo "Checks have not passed, skipping merge"
@@ -134,7 +146,7 @@ jobs:
         github-token: ${{secrets.GITHUB_TOKEN}}
         script: |
           github.rest.issues.createComment({
-            issue_number: ${{ github.event.pull_request.number }},
+            issue_number: ${{ needs.check-deploy-command.outputs.event_number }},
             owner: context.repo.owner,
             repo: context.repo.repo,
             body: "The image has been updated in the Terraform file. Please ensure the action on https://github.com/Vertisphere/ordrport-terraform has been completed to deploy the changes to prod."
