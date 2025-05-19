@@ -74,6 +74,22 @@ func (s *SQLStorage) Close() error {
 	return s.db.Close()
 }
 
+func (s SQLStorage) CreateCompany(companyId string, authCode string, bearerToken string, bearerExpiresIn int64, refreshToken string, refreshExpiresIn int64, firebaseID string) error {
+	// Create TIMESTAMP from current time + expiresIn
+	bearerExpiry := fmt.Sprintf("NOW() + INTERVAL '%d seconds'", bearerExpiresIn)
+	refreshExpiry := fmt.Sprintf("NOW() + INTERVAL '%d seconds'", refreshExpiresIn)
+	query := fmt.Sprintf(
+		`INSERT INTO company(
+			qb_company_id, qb_auth_code, qb_bearer_token, qb_bearer_token_expiry, qb_refresh_token, qb_refresh_token_expiry, firebase_id
+		) VALUES($1, $2, $3, %s, $4, %s, $5)`,
+		bearerExpiry, refreshExpiry,
+	)
+	_, err := s.db.Exec(query, companyId, authCode, bearerToken, refreshToken, firebaseID)
+	if err != nil {
+		return err
+	}
+	return nil
+}
 func (s SQLStorage) UpsertCompany(companyId string, authCode string, bearerToken string, bearerExpiresIn int64, refreshToken string, refreshExpiresIn int64) error {
 	// Create TIMESTAMP from current time + expiresIn
 	bearerExpiry := fmt.Sprintf("NOW() + INTERVAL '%d seconds'", bearerExpiresIn)
@@ -91,6 +107,34 @@ func (s SQLStorage) UpsertCompany(companyId string, authCode string, bearerToken
 		bearerExpiry, refreshExpiry,
 	)
 	_, err := s.db.Exec(query, companyId, authCode, bearerToken, refreshToken)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s SQLStorage) DeleteCompanyByCompanyId(companyId string) error {
+	query := "DELETE FROM company WHERE qb_company_id = $1"
+	_, err := s.db.Exec(query, companyId)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s SQLStorage) UpdateTokenForCompany(companyId string, bearerToken string, bearerExpiresIn int64, refreshToken string, refreshExpiresIn int64) error {
+	bearerExpiry := fmt.Sprintf("NOW() + INTERVAL '%d seconds'", bearerExpiresIn)
+	refreshExpiry := fmt.Sprintf("NOW() + INTERVAL '%d seconds'", refreshExpiresIn)
+	query := fmt.Sprintf(
+		`UPDATE company SET
+			qb_bearer_token = $1,
+			qb_bearer_token_expiry = %s,
+			qb_refresh_token = $2,
+			qb_refresh_token_expiry = %s
+		WHERE qb_company_id = $3;`,
+		bearerExpiry, refreshExpiry,
+	)
+	_, err := s.db.Exec(query, bearerToken, refreshToken, companyId)
 	if err != nil {
 		return err
 	}
@@ -167,6 +211,16 @@ func (s SQLStorage) IsFirebaseUserCustomer(customerID string) (bool, error) {
 // 	}
 // 	return nil
 // }
+
+func (s SQLStorage) CompanyExists(companyID string) (bool, error) {
+	var exists bool
+	query := "SELECT EXISTS(SELECT 1 FROM company WHERE qb_company_id = $1)"
+	err := s.db.QueryRow(query, companyID).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
+}
 
 func (s SQLStorage) GetCompany(companyID string) (domain.Company, error) {
 	var company domain.Company

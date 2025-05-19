@@ -1,15 +1,12 @@
 package net
 
 import (
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
-	"regexp"
 	"strconv"
 	"time"
 
@@ -25,29 +22,36 @@ import (
 
 	"github.com/sendgrid/sendgrid-go"
 	"github.com/sendgrid/sendgrid-go/helpers/mail"
+
+	"github.com/rs/zerolog/log"
 )
 
-func ShowClaims() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		c := config.LoadConfigs()
-		log.Println("JWEKey:", c.JWEKey)
-		log.Println("PORT:", c.Port)
-		log.Println("DB_HOST:", c.DB.Host)
-		log.Println("DB_USER:", c.DB.User)
-		log.Println("DB_PASS:", c.DB.Password)
-		log.Println("DB_NAME:", c.DB.Name)
-		log.Println("QUICKBOOKS_CLIENT_ID:", c.Quickbooks.ClientID)
-		log.Println("QUICKBOOKS_REDIRECT_URI:", c.Quickbooks.RedirectURI)
-		log.Println("QUICKBOOKS_IS_PRODUCTION:", c.Quickbooks.IsProduction)
-		log.Println("QUICKBOOKS_MINOR_VERSION:", c.Quickbooks.MinorVersion)
-		log.Println("QUICKBOOKS_CLIENT_SECRET:", c.Quickbooks.ClientSecret)
-		log.Println("FIREBASE KEY:", c.Firebase.APIKey)
-		log.Println("JWE_KEY:", c.JWEKey)
-		claims := r.Context().Value("claims").(domain.Claims)
-		log.Println(claims)
-	}
-}
-
+//	func ShowClaims() http.HandlerFunc {
+//		return func(w http.ResponseWriter, r *http.Request) {
+//			c := config.LoadConfigs()
+//			log.Println("JWEKey:", c.JWEKey)
+//			log.Println("PORT:", c.Port)
+//			log.Println("DB_HOST:", c.DB.Host)
+//			log.Println("DB_USER:", c.DB.User)
+//			log.Println("DB_PASS:", c.DB.Password)
+//			log.Println("DB_NAME:", c.DB.Name)
+//			log.Println("QUICKBOOKS_CLIENT_ID:", c.Quickbooks.ClientID)
+//			log.Println("QUICKBOOKS_REDIRECT_URI:", c.Quickbooks.RedirectURI)
+//			log.Println("QUICKBOOKS_IS_PRODUCTION:", c.Quickbooks.IsProduction)
+//			log.Println("QUICKBOOKS_MINOR_VERSION:", c.Quickbooks.MinorVersion)
+//			log.Println("QUICKBOOKS_CLIENT_SECRET:", c.Quickbooks.ClientSecret)
+//			log.Println("FIREBASE KEY:", c.Firebase.APIKey)
+//			log.Println("JWE_KEY:", c.JWEKey)
+//			claims := r.Context().Value("claims").(domain.Claims)
+//			log.Println(claims)
+//		}
+//	}
+//
+// Get qb token and encrypt it ->
+// We get company ID
+// Check if company exists in DB
+// If exists -> get firebase ID from DB -> Get custom claim Token -> Sign in with custom token -> generate JWT
+// If not exists -> create a new firebase anonymous user -> create a new company in DB -> link with firebase user -> generate JWT
 func LoginQuickbooks(fbc *fb.Client, qbc *qb.Client, a *auth.Client, s *storage.SQLStorage) http.HandlerFunc {
 	type request struct {
 		AuthCode        string `json:"auth_code"`
@@ -64,131 +68,68 @@ func LoginQuickbooks(fbc *fb.Client, qbc *qb.Client, a *auth.Client, s *storage.
 	return func(w http.ResponseWriter, r *http.Request) {
 		req, err := decode[request](r)
 		if err != nil {
-			http.Error(w, "Invalid request payload", http.StatusBadRequest)
+			logHttpError(err, "Invalid request payload", http.StatusBadRequest, &w)
 			return
 		}
-		var bearerToken *qb.BearerToken
-		if req.UseCachedBearer {
-			dbCompany, err := s.GetCompany(req.RealmID)
+
+		// Get QB token
+		bearerToken, err := qbc.RetrieveBearerToken(req.AuthCode)
+		if err != nil {
+			logHttpError(err, "Could not get token", http.StatusInternalServerError, &w)
+			return
+		}
+
+		// Encrypt token to embed in claims
+		encryptedToken, err := encryptToken(bearerToken.AccessToken)
+		if err != nil {
+			logHttpError(err, "Could not encrypt token", http.StatusInternalServerError, &w)
+			return
+		}
+
+		// Check if company is in DB
+		companyExists, err := s.CompanyExists(req.RealmID)
+		if err != nil {
+			logHttpError(err, "Could not check if company exists", http.StatusInternalServerError, &w)
+			return
+		}
+
+		var firebaseID string
+		if companyExists {
+			// Get company
+			company, err := s.GetCompany(req.RealmID)
 			if err != nil {
-				log.Println(err)
-				http.Error(w, "Could not get company from DB", http.StatusInternalServerError)
+				logHttpError(err, "Could not get company from DB", http.StatusInternalServerError, &w)
 				return
 			}
-			if dbCompany.QBBearerToken == "" {
-				http.Error(w, "No cached token", http.StatusBadRequest)
-				return
-			}
-			log.Println(dbCompany.QBBearerTokenExpiry)
-			isTokenExpired := dbCompany.QBBearerTokenExpiry.Before(time.Now())
-			if isTokenExpired {
-				bearerToken, err = qbc.RefreshToken(dbCompany.QBRefreshToken)
-				if err != nil {
-					log.Println(err)
-					http.Error(w, "Could not refresh token in DB", http.StatusInternalServerError)
-					return
-				}
-				err = s.UpsertCompany(dbCompany.QBCompanyID, dbCompany.QBAuthCode, bearerToken.AccessToken, bearerToken.ExpiresIn, bearerToken.RefreshToken, bearerToken.XRefreshTokenExpiresIn)
-			} else {
-				bearerToken = &qb.BearerToken{AccessToken: dbCompany.QBBearerToken}
-			}
+			// Get firebase ID (We assume firebase ID is always set)
+			firebaseID = company.FirebaseID
 		} else {
-			bearerToken, err = qbc.RetrieveBearerToken(req.AuthCode)
+			// Create a new firebase anonymous user
+			userToCreate := auth.UserToCreate{}
+			createdUser, err := a.CreateUser(r.Context(), &userToCreate)
 			if err != nil {
-				log.Println(err)
-				http.Error(w, "Could not get token", http.StatusInternalServerError)
+				logHttpError(err, "Could not create user in firebase", http.StatusInternalServerError, &w)
 				return
 			}
-			log.Println(bearerToken)
 
-			// TODO: return a transaction here that we can rollback if something goes wrong
-			err = s.UpsertCompany(req.RealmID, req.AuthCode, bearerToken.AccessToken, bearerToken.ExpiresIn, bearerToken.RefreshToken, bearerToken.XRefreshTokenExpiresIn)
+			log.Debug().Interface("createdUser", createdUser).Msg("Created user in firebase")
+
+			firebaseID = createdUser.UID
+
+			// Create a new company in DB
+			err = s.CreateCompany(req.RealmID, req.AuthCode, bearerToken.AccessToken, bearerToken.ExpiresIn, bearerToken.RefreshToken, bearerToken.XRefreshTokenExpiresIn, firebaseID)
 			if err != nil {
-				log.Println(err)
-				http.Error(w, "Could not upsert company", http.StatusInternalServerError)
-				return
-			}
-		}
-		qbc.SetClient(*bearerToken)
-		userInfo, err := qbc.GetUserInfo()
-		if err != nil {
-			// TODO rollback
-			log.Println(err)
-			http.Error(w, "Could not get user info", http.StatusInternalServerError)
-			return
-		}
-		firebaseID, err := s.IsFirebaseUser(req.RealmID)
-		if err != nil {
-			// TODO rollback
-			http.Error(w, "Could not check if user exists", http.StatusInternalServerError)
-			return
-		}
-		if firebaseID == "" {
-			// Password is base64 encoded realmID idk man
-			encodedRealmID := base64.StdEncoding.EncodeToString([]byte(req.RealmID))
-			// TODO: if userInfo.PhoneNumber is not defined is it ""?
-			// Correct format for Firebase Auth
-			// phoneNumber := "+19099090900"  // E.164 format)
-			phoneNumber, err := qbToE164Phone(userInfo.PhoneNumber)
-			if err != nil {
-				phoneNumber = ""
-			}
-			var userFirebaseID string
-			createdUserResp, err := fbc.SignUp(userInfo.Email, encodedRealmID, phoneNumber)
-			userFirebaseID = createdUserResp.LocalId
-			if err != nil {
-				// TODO rollback transaction and delete firebase uesr
-				log.Println(err.Error())
-				if err.Error() == "email already exists" {
-					// http.Error(w, "Email already exists", http.StatusBadRequest)
-					// Get Firebase id from email
-					user, err := a.GetUserByEmail(context.Background(), userInfo.Email)
-					userFirebaseID = user.UID
-					if err != nil {
-						http.Error(w, "User with Email exists and Could not get user by email", http.StatusInternalServerError)
-					}
-				} else {
-					http.Error(w, "Could not create user", http.StatusInternalServerError)
-					return
+				// Delete the user we just created
+				rollBackErr := a.DeleteUser(r.Context(), firebaseID)
+				if rollBackErr != nil {
+					log.Error().Err(rollBackErr).Msgf("Could not delete user in firebase after DB createCompany failed for user: %s", firebaseID)
 				}
-			}
-			err = s.SetCompanyFirebaseID(req.RealmID, userFirebaseID)
-			if err != nil {
-				// TODO rollback transaction and delete firebase user
-				log.Println(err.Error())
-				http.Error(w, "Could not link firebase ID of new user to company", http.StatusInternalServerError)
+				logHttpError(err, "Could not create company in DB", http.StatusInternalServerError, &w)
 				return
 			}
-			firebaseID = userFirebaseID
 		}
-		log.Println(firebaseID)
 
-		encKey := config.LoadConfigs().JWEKey
-		rawKey, err := base64.StdEncoding.DecodeString(encKey)
-		if err != nil {
-			// rollback
-			log.Fatalf("Failed to decode Base64 key: %v", err)
-		}
-		encrypter, err := jose.NewEncrypter(jose.A256GCM, jose.Recipient{Algorithm: jose.DIRECT, Key: rawKey}, nil)
-		if err != nil {
-			// rollback
-			log.Println(err)
-			http.Error(w, "Could not create encrypter", http.StatusInternalServerError)
-			return
-		}
-		object, err := encrypter.Encrypt([]byte(bearerToken.AccessToken))
-		if err != nil {
-			// rollback
-			http.Error(w, "Could not encrypt token", http.StatusInternalServerError)
-			return
-		}
-		encryptedToken, err := object.CompactSerialize()
-		if err != nil {
-			// rollback
-			http.Error(w, "Could not serialize token", http.StatusInternalServerError)
-			return
-		}
-		log.Println(encryptedToken)
+		// With firebaseID, create a custom claims
 		customClaims := domain.Claims{
 			QBCompanyID:   req.RealmID,
 			QBCustomerID:  "0",
@@ -200,30 +141,15 @@ func LoginQuickbooks(fbc *fb.Client, qbc *qb.Client, a *auth.Client, s *storage.
 		}
 		customTokenInternal, err := a.CustomTokenWithClaims(r.Context(), firebaseID, domain.ClaimsToMap(customClaims))
 		if err != nil {
-			log.Println(err)
-			http.Error(w, "Could not create custom token", http.StatusInternalServerError)
+			logHttpError(err, "Could not create custom token", http.StatusInternalServerError, &w)
 			return
 		}
-		log.Println(customTokenInternal)
 		signInWithCustomTokenResp, err := fbc.SignInWithCustomToken(customTokenInternal)
 		if err != nil {
-			log.Println(err)
-			http.Error(w, "Could not sign in with custom token", http.StatusInternalServerError)
+			logHttpError(err, "Could not sign in with custom token", http.StatusInternalServerError, &w)
 			return
 		}
 
-		// FOR PURELY DEBUGGING PURPOSES
-		// decryptedObject, err := jose.ParseEncrypted(encryptedToken)
-		// if err != nil {
-		// 	log.Fatalf("Failed to parse encrypted message: %v", err)
-		// }
-		// decrypted, err := decryptedObject.Decrypt(rawKey)
-		// if err != nil {
-		// 	log.Fatalf("Failed to decrypt message: %v", err)
-		// }
-		// log.Println(string(decrypted))
-
-		// TODO return name for intro
 		response := response{
 			Token:   signInWithCustomTokenResp.IdToken,
 			Success: true}
@@ -239,17 +165,20 @@ func ListQBCustomers(qbc *qb.Client, s *storage.SQLStorage) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// get claims from context
 		claims := r.Context().Value("claims").(domain.Claims)
+
 		// If franchisee, then don't allow
 		if !claims.IsFranchiser {
-			http.Error(w, "No Access", http.StatusServiceUnavailable)
+			logHttpError(nil, "No Access", http.StatusServiceUnavailable, &w)
 			return
 		}
+
 		// Get QB token and set jwt for QB Client
 		token, err := decryptJWE(claims.QBBearerToken)
 		if err != nil {
-			http.Error(w, "Could not decrypt QB token", http.StatusUnauthorized)
+			logHttpError(err, "Could not decrypt QB token", http.StatusUnauthorized, &w)
 			return
 		}
+
 		qbc.SetClient(qb.BearerToken{AccessToken: string(token)})
 		// Get query params
 		q := r.URL.Query()
@@ -261,14 +190,14 @@ func ListQBCustomers(qbc *qb.Client, s *storage.SQLStorage) http.HandlerFunc {
 		// Get Total Count of query
 		totalCount, err := qbc.QueryCustomersCount(claims.QBCompanyID, query)
 		if err != nil {
-			http.Error(w, "Could not get customers (total count)", http.StatusInternalServerError)
+			logHttpError(err, "Could not get customers (total count)", http.StatusInternalServerError, &w)
 			return
 		}
 
 		// Get Customers from QB
 		qbCustomers, err := qbc.QueryCustomers(claims.QBCompanyID, orderBy, pageSize, pageToken, query)
 		if err != nil {
-			http.Error(w, "Could not get customers", http.StatusInternalServerError)
+			logHttpError(err, "Could not get customers", http.StatusInternalServerError, &w)
 			return
 		}
 		// convert qbCustomers to customer type
@@ -310,42 +239,36 @@ func CreateCustomer(fbc *fb.Client, qbc *qb.Client, a *auth.Client, s *storage.S
 
 		token, err := decryptJWE(claims.QBBearerToken)
 		if err != nil {
-			http.Error(w, "Could not decrypt QB token", http.StatusUnauthorized)
+			logHttpError(err, "Could not decrypt QB token", http.StatusUnauthorized, &w)
 			return
 		}
 		qbc.SetClient(qb.BearerToken{AccessToken: string(token)})
 
 		req, err := decode[request](r)
 		if err != nil {
-			http.Error(w, "Invalid request payload", http.StatusBadRequest)
+			logHttpError(err, "Invalid request payload", http.StatusBadRequest, &w)
 			return
 		}
 		// TODO add check for existing row in DB
 		customer, err := qbc.GetCustomerById(claims.QBCompanyID, req.QBCustomerID)
 		if err != nil {
-			http.Error(w, "Could not get customer", http.StatusInternalServerError)
+			logHttpError(err, "Could not get customer", http.StatusInternalServerError, &w)
 			return
 		}
-		log.Println(customer)
 		// Create firebase account for customer
 		encodedRealmID := base64.StdEncoding.EncodeToString([]byte(claims.QBCompanyID))
-		phoneNumber, err := qbToE164Phone(customer.PrimaryPhone.FreeFormNumber)
-		if err != nil {
-			phoneNumber = ""
-		}
-		log.Println(phoneNumber)
+		phoneNumber := qbToE164Phone(customer.PrimaryPhone.FreeFormNumber)
+
 		createdUserResp, err := fbc.SignUp(req.CustomerEmail, encodedRealmID, phoneNumber)
 		if err != nil {
-			log.Println(err)
-			http.Error(w, "Could not create user", http.StatusInternalServerError)
+			logHttpError(err, "Could not create user", http.StatusInternalServerError, &w)
 			return
 		}
-		log.Println(claims.QBCompanyID)
 		err = s.CreateCustomer(claims.QBCompanyID, req.QBCustomerID, createdUserResp.LocalId)
 		if err != nil {
-			log.Println(err)
-			http.Error(w, "Could not create customer in DB", http.StatusInternalServerError)
+			logHttpError(err, "Could not create customer in DB", http.StatusInternalServerError, &w)
 			// TODO: this is kinda faulty
+			// TODO long after that todo: what does this even mean
 			a.DeleteUser(r.Context(), createdUserResp.LocalId)
 			return
 		}
@@ -356,8 +279,7 @@ func CreateCustomer(fbc *fb.Client, qbc *qb.Client, a *auth.Client, s *storage.S
 		// a.GetUser(r.Context(), uid.UID)
 		link, err := a.PasswordResetLinkWithSettings(r.Context(), req.CustomerEmail, &emailSetting)
 		if err != nil {
-			log.Println(err)
-			http.Error(w, "Could not create reset link", http.StatusInternalServerError)
+			logHttpError(err, "Could not create reset link", http.StatusInternalServerError, &w)
 			return
 		}
 
@@ -372,13 +294,12 @@ func CreateCustomer(fbc *fb.Client, qbc *qb.Client, a *auth.Client, s *storage.S
 		client := sendgrid.NewSendClient(os.Getenv("SENDGRID_API_KEY"))
 		resp, err := client.Send(message)
 		if err != nil {
-			log.Println(err)
+			log.Error().Err(err)
 			a.DeleteUser(r.Context(), createdUserResp.LocalId)
 		}
-		log.Println(resp)
 		// TODO: IS this 202?
 		if resp.StatusCode != http.StatusAccepted {
-			log.Println("reset email not sent")
+			log.Error().Interface("response", resp).Msg("reset email wasn't a 202")
 			// TODO: should we delete this
 			// a.DeleteUser(r.Context(), createdUserResp.LocalId)
 		}
@@ -392,7 +313,7 @@ func CreateCustomer(fbc *fb.Client, qbc *qb.Client, a *auth.Client, s *storage.S
 			}
 			_, err = qbc.UpdateCustomer(claims.QBCompanyID, &customerWithEmail)
 			if err != nil {
-				log.Println(err)
+				log.Error().Err(err).Msg("Could not update customer email in QB")
 			}
 		}
 
@@ -413,26 +334,24 @@ func DeleteCustomer(a *auth.Client, s *storage.SQLStorage) http.HandlerFunc {
 		claims := r.Context().Value("claims").(domain.Claims)
 		// User should be franchisor
 		if !claims.IsFranchiser {
-			http.Error(w, "No Access", http.StatusServiceUnavailable)
+			logHttpError(nil, "No Access", http.StatusServiceUnavailable, &w)
 			return
 		}
 		req, err := decode[request](r)
 		if err != nil {
-			http.Error(w, "Invalid request payload", http.StatusBadRequest)
+			logHttpError(err, "Invalid request payload", http.StatusBadRequest, &w)
 			return
 		}
 
 		firebaseID, err := s.DeleteCustomer(claims.QBCompanyID, req.QBCustomerID)
 		if err != nil {
-			log.Println(err)
-			http.Error(w, "Could not delete customer in db", http.StatusInternalServerError)
+			logHttpError(err, "Could not delete customer in db", http.StatusInternalServerError, &w)
 			return
 		}
 
 		err = a.DeleteUser(r.Context(), firebaseID)
 		if err != nil {
-			log.Println(err)
-			http.Error(w, "Could not delete user in firebase", http.StatusInternalServerError)
+			logHttpError(err, "Could not delete user in firebase", http.StatusInternalServerError, &w)
 			return
 		}
 
@@ -453,62 +372,62 @@ func LoginCustomer(fbc *fb.Client, qbc *qb.Client, a *auth.Client, s *storage.SQ
 	return func(w http.ResponseWriter, r *http.Request) {
 		req, err := decode[request](r)
 		if err != nil {
-			http.Error(w, "Invalid request payload", http.StatusBadRequest)
+			logHttpError(err, "Invalid request payload", http.StatusBadRequest, &w)
 			return
 		}
 
 		signInWithPasswordResponse, err := fbc.SignInWithPassword(req.Email, req.Password)
 		if err != nil {
-			log.Println(err)
-			http.Error(w, "Could not sign in", http.StatusInternalServerError)
+			logHttpError(err, "Could not sign in", http.StatusInternalServerError, &w)
 			return
 		}
-		log.Println(signInWithPasswordResponse)
+		log.Debug().Interface("signInWithPasswordResponse", signInWithPasswordResponse).Msg("Sign in with password response")
 		customer, err := s.GetCustomerByFirebaseID(signInWithPasswordResponse.LocalID)
 		if err != nil {
-			log.Println(err)
-			http.Error(w, "Could not get customer", http.StatusInternalServerError)
+			logHttpError(err, "Could not get customer", http.StatusInternalServerError, &w)
 			return
 		}
-		log.Println(customer)
+		log.Debug().Interface("customer", customer).Msg("Fetched customer")
 		dbCompany, err := s.GetCompany(customer.QBCompanyID)
 		if err != nil {
-			log.Println(err)
-			http.Error(w, "Could not get company from DB", http.StatusInternalServerError)
+			logHttpError(err, "Could not get company from DB", http.StatusInternalServerError, &w)
 			return
 		}
 		if dbCompany.QBBearerToken == "" {
-			http.Error(w, "No cached token", http.StatusBadRequest)
+			logHttpError(nil, "No cached token", http.StatusBadRequest, &w)
 			return
 		}
 		// Instead of checking for expiry, just get fresh token
 		bearerToken, err := qbc.RefreshToken(dbCompany.QBRefreshToken)
 		if err != nil {
-			log.Println(err)
-			http.Error(w, "Could not refresh token in DB", http.StatusInternalServerError)
+			logHttpError(err, "Could not refresh token in DB", http.StatusInternalServerError, &w)
 			return
 		}
 		err = s.UpsertCompany(dbCompany.QBCompanyID, dbCompany.QBAuthCode, bearerToken.AccessToken, bearerToken.ExpiresIn, bearerToken.RefreshToken, bearerToken.XRefreshTokenExpiresIn)
+		if err != nil {
+			logHttpError(err, "Could not upsert company", http.StatusInternalServerError, &w)
+			return
+		}
 
 		encKey := config.LoadConfigs().JWEKey
 		rawKey, err := base64.StdEncoding.DecodeString(encKey)
 		if err != nil {
-			log.Fatalf("Failed to decode Base64 key: %v", err)
+			logHttpError(err, "Failed to decode Base64 key", http.StatusInternalServerError, &w)
+			return
 		}
 		encrypter, err := jose.NewEncrypter(jose.A256GCM, jose.Recipient{Algorithm: jose.DIRECT, Key: rawKey}, nil)
 		if err != nil {
-			log.Println(err)
-			http.Error(w, "Could not create encrypter", http.StatusInternalServerError)
+			logHttpError(err, "Could not create encrypter", http.StatusInternalServerError, &w)
 			return
 		}
 		object, err := encrypter.Encrypt([]byte(bearerToken.AccessToken))
 		if err != nil {
-			http.Error(w, "Could not encrypt token", http.StatusInternalServerError)
+			logHttpError(err, "Could not encrypt token", http.StatusInternalServerError, &w)
 			return
 		}
 		encryptedToken, err := object.CompactSerialize()
 		if err != nil {
-			http.Error(w, "Could not serialize token", http.StatusInternalServerError)
+			logHttpError(err, "Could not serialize token", http.StatusInternalServerError, &w)
 			return
 		}
 		customClaims := domain.Claims{
@@ -521,7 +440,15 @@ func LoginCustomer(fbc *fb.Client, qbc *qb.Client, a *auth.Client, s *storage.SQ
 			// IsAdmin
 		}
 		customTokenInternal, err := a.CustomTokenWithClaims(r.Context(), customer.FirebaseID, domain.ClaimsToMap(customClaims))
+		if err != nil {
+			logHttpError(err, "Could not create custom token", http.StatusInternalServerError, &w)
+			return
+		}
 		signInWithCustomTokenResp, err := fbc.SignInWithCustomToken(customTokenInternal)
+		if err != nil {
+			logHttpError(err, "Could not sign in with custom token", http.StatusInternalServerError, &w)
+			return
+		}
 
 		response := response{
 			Token:   signInWithCustomTokenResp.IdToken,
@@ -552,14 +479,13 @@ func ListQBItems(qbc *qb.Client) http.HandlerFunc {
 
 		totalCount, err := qbc.QueryItemsCount(claims.QBCompanyID, query)
 		if err != nil {
-			log.Println(err)
-			http.Error(w, "Could not get items (total count)", http.StatusInternalServerError)
+			logHttpError(err, "Could not get items (total count)", http.StatusInternalServerError, &w)
 			return
 		}
 
 		items, err := qbc.QueryItems(claims.QBCompanyID, orderBy, pageSize, pageToken, query)
 		if err != nil {
-			http.Error(w, "Could not get items", http.StatusInternalServerError)
+			logHttpError(err, "Could not get items", http.StatusInternalServerError, &w)
 			return
 		}
 
@@ -578,13 +504,13 @@ func CreateQBInvoice(qbc *qb.Client) http.HandlerFunc {
 		claims := r.Context().Value("claims").(domain.Claims)
 		// Franchisers should not be able to create invoices
 		if claims.IsFranchiser {
-			http.Error(w, "No Access", http.StatusServiceUnavailable)
+			logHttpError(nil, "No Access", http.StatusServiceUnavailable, &w)
 			return
 		}
 		// Get QB token and set jwt for QB Client
 		token, err := decryptJWE(claims.QBBearerToken)
 		if err != nil {
-			http.Error(w, "Could not decrypt QB token", http.StatusUnauthorized)
+			logHttpError(err, "Could not decrypt QB token", http.StatusUnauthorized, &w)
 			return
 		}
 		qbc.SetClient(qb.BearerToken{AccessToken: string(token)})
@@ -605,7 +531,7 @@ func CreateQBInvoice(qbc *qb.Client) http.HandlerFunc {
 		// Get customer details
 		customer, err := qbc.GetCustomerById(claims.QBCompanyID, claims.QBCustomerID)
 		if err != nil {
-			log.Printf("%s", err)
+			logHttpError(err, "Could not get customer", http.StatusInternalServerError, &w)
 		}
 		if customer.PrimaryEmailAddr != nil && customer.PrimaryEmailAddr.Address != "" {
 			invoice.BillEmail = qb.EmailAddress{Address: customer.PrimaryEmailAddr.Address}
@@ -614,8 +540,7 @@ func CreateQBInvoice(qbc *qb.Client) http.HandlerFunc {
 		// Create Invoice and send
 		createdInvoice, err := qbc.CreateInvoice(claims.QBCompanyID, invoice)
 		if err != nil {
-			log.Println(err)
-			http.Error(w, "Could not create invoice", http.StatusInternalServerError)
+			logHttpError(err, "Could not create invoice", http.StatusInternalServerError, &w)
 			return
 		}
 
@@ -710,8 +635,7 @@ func UpdateQBInvoice(qbc *qb.Client) http.HandlerFunc {
 		}
 		_, err = qbc.UpdateInvoice(claims.QBCompanyID, invoiceToUpdate)
 		if err != nil {
-			log.Println(err)
-			http.Error(w, "Could not update invoice", http.StatusInternalServerError)
+			logHttpError(err, "Could not update invoice", http.StatusInternalServerError, &w)
 			return
 		}
 
@@ -771,8 +695,7 @@ func PublishQBInvoice(qbc *qb.Client, auth *auth.Client, twc *twilio.RestClient)
 		}
 		_, err = qbc.UpdateInvoice(claims.QBCompanyID, invoiceToUpdate)
 		if err != nil {
-			log.Println(err)
-			http.Error(w, "Could not update invoice", http.StatusInternalServerError)
+			logHttpError(err, "Could not update invoice", http.StatusInternalServerError, &w)
 			return
 		}
 
@@ -808,15 +731,10 @@ func PublishQBInvoice(qbc *qb.Client, auth *auth.Client, twc *twilio.RestClient)
 		// get customer name
 		customer, err := qbc.GetCustomerById(claims.QBCompanyID, existingInvoice.CustomerRef.Value)
 		if err != nil {
-			log.Println("Could not get company or customer to send sms message for publish")
-			log.Printf("%s", err)
+			log.Error().Err(err).Msg("Could not get company or customer to send sms message for publish")
 		} else {
 			if phoneNumber == "" {
-				log.Println(phoneNumber)
-				phoneNumber, err = qbToE164Phone(franchisor.PrimaryPhone.FreeFormNumber)
-				if err != nil {
-					log.Printf("%s", err)
-				}
+				phoneNumber = qbToE164Phone(franchisor.PrimaryPhone.FreeFormNumber)
 			}
 		}
 
@@ -828,7 +746,6 @@ func PublishQBInvoice(qbc *qb.Client, auth *auth.Client, twc *twilio.RestClient)
 		// TODO are all these phone number formats the same?
 		params := &twApi.CreateMessageParams{}
 		params.SetBody(fmt.Sprintf("An order with ID number %s has been published by franchisee: %s. For more details please visit: https://ordrport.com/franchisor/orders/pending-review", existingInvoice.Id, customer.DisplayName))
-		log.Println(phoneNumber)
 		params.SetFrom("+16478009984")
 		params.SetTo(phoneNumber)
 
@@ -837,9 +754,9 @@ func PublishQBInvoice(qbc *qb.Client, auth *auth.Client, twc *twilio.RestClient)
 			log.Printf("Could not send SMS message %s", err)
 		} else {
 			if twResp.Body != nil {
-				log.Println(*twResp.Body)
+				log.Error().Interface("twResp", *twResp.Body).Msg("Could not send SMS message")
 			} else {
-				log.Println(twResp.Body)
+				log.Print(twResp)
 			}
 		}
 	}
@@ -891,8 +808,7 @@ func UnpublishQBInvoice(qbc *qb.Client, auth *auth.Client, twc *twilio.RestClien
 		}
 		_, err = qbc.UpdateInvoice(claims.QBCompanyID, invoiceToUpdate)
 		if err != nil {
-			log.Println(err)
-			http.Error(w, "Could not update invoice", http.StatusInternalServerError)
+			logHttpError(err, "Could not update invoice", http.StatusInternalServerError, &w)
 			return
 		}
 
@@ -924,17 +840,15 @@ func UnpublishQBInvoice(qbc *qb.Client, auth *auth.Client, twc *twilio.RestClien
 		var phoneNumber string
 		customer, err := qbc.GetCustomerById(claims.QBCompanyID, existingInvoice.CustomerRef.Value)
 		if err != nil {
-			log.Println("Could not get customer to send sms message for unpublish")
-			log.Printf("%s", err)
+			log.Error().Err(err).Msg("Could not get customer to send sms message for unpublish")
 		} else {
-			log.Println(phoneNumber)
 			if phoneNumber == "" {
-				phoneNumber, err = qbToE164Phone(customer.PrimaryPhone.FreeFormNumber)
+				phoneNumber = qbToE164Phone(customer.PrimaryPhone.FreeFormNumber)
 				if customer.PrimaryPhone.FreeFormNumber == "" {
-					phoneNumber, err = qbToE164Phone(customer.Mobile.FreeFormNumber)
+					phoneNumber = qbToE164Phone(customer.Mobile.FreeFormNumber)
 				}
 				if customer.Mobile.FreeFormNumber == "" {
-					phoneNumber, err = qbToE164Phone(customer.AlternatePhone.FreeFormNumber)
+					phoneNumber = qbToE164Phone(customer.AlternatePhone.FreeFormNumber)
 				}
 				if err != nil {
 					log.Printf("%s", err)
@@ -944,13 +858,12 @@ func UnpublishQBInvoice(qbc *qb.Client, auth *auth.Client, twc *twilio.RestClien
 
 		// TODO FOR Demo purpose
 		if phoneNumber == "" {
-			log.Println("No Phone number to send notification to. None sent.")
+			log.Error().Msg("No phone number to send notification to. None sent.")
 			return
 		}
 		// TODO are all these phone number formats the same?
 		params := &twApi.CreateMessageParams{}
 		params.SetBody(fmt.Sprintf("An order with ID number %s has been rejected. For more details please visit: https://ordrport.com/franchisor/orders/pending-review", existingInvoice.Id))
-		log.Println(phoneNumber)
 		params.SetFrom("+16478009984")
 		params.SetTo(phoneNumber)
 
@@ -959,9 +872,9 @@ func UnpublishQBInvoice(qbc *qb.Client, auth *auth.Client, twc *twilio.RestClien
 			log.Printf("Could not send SMS message %s", err)
 		} else {
 			if twResp.Body != nil {
-				log.Println(*twResp.Body)
+				log.Error().Interface("twResp", twResp).Msg("twRespbody was nil")
 			} else {
-				log.Println(twResp.Body)
+				log.Print(twResp)
 			}
 		}
 	}
@@ -1018,8 +931,7 @@ func ApproveQBInvoice(qbc *qb.Client, a *auth.Client, twc *twilio.RestClient) ht
 		}
 		_, err = qbc.UpdateInvoice(claims.QBCompanyID, invoiceToUpdate)
 		if err != nil {
-			log.Println(err)
-			http.Error(w, "Could not update invoice", http.StatusInternalServerError)
+			logHttpError(err, "Could not update invoice", http.StatusInternalServerError, &w)
 			return
 		}
 
@@ -1053,12 +965,12 @@ func ApproveQBInvoice(qbc *qb.Client, a *auth.Client, twc *twilio.RestClient) ht
 			log.Printf("%s", err)
 		} else {
 			if phoneNumber == "" {
-				phoneNumber, err = qbToE164Phone(customer.PrimaryPhone.FreeFormNumber)
+				phoneNumber = qbToE164Phone(customer.PrimaryPhone.FreeFormNumber)
 				if customer.PrimaryPhone.FreeFormNumber == "" {
-					phoneNumber, err = qbToE164Phone(customer.Mobile.FreeFormNumber)
+					phoneNumber = qbToE164Phone(customer.Mobile.FreeFormNumber)
 				}
 				if customer.Mobile.FreeFormNumber == "" {
-					phoneNumber, err = qbToE164Phone(customer.AlternatePhone.FreeFormNumber)
+					phoneNumber = qbToE164Phone(customer.AlternatePhone.FreeFormNumber)
 				}
 				if err != nil {
 					log.Printf("%s", err)
@@ -1083,9 +995,9 @@ func ApproveQBInvoice(qbc *qb.Client, a *auth.Client, twc *twilio.RestClient) ht
 			log.Printf("Could not send SMS message %s", err)
 		} else {
 			if twResp.Body != nil {
-				log.Println(*twResp.Body)
+				log.Error().Interface("twResp", twResp).Msg("twRespbody was nil")
 			} else {
-				log.Println(twResp.Body)
+				log.Print(twResp)
 			}
 		}
 	}
@@ -1143,8 +1055,7 @@ func VoidQBInvoice(qbc *qb.Client, a *auth.Client, twc *twilio.RestClient) http.
 		updatedInvoice, err := qbc.UpdateInvoice(claims.QBCompanyID, invoiceToUpdate)
 		err = qbc.VoidInvoice(claims.QBCompanyID, updatedInvoice.Id, updatedInvoice.SyncToken)
 		if err != nil {
-			log.Println(err)
-			http.Error(w, "Could not void invoice", http.StatusInternalServerError)
+			logHttpError(err, "Could not void invoice", http.StatusInternalServerError, &w)
 			return
 		}
 
@@ -1153,7 +1064,7 @@ func VoidQBInvoice(qbc *qb.Client, a *auth.Client, twc *twilio.RestClient) http.
 		// send twilio message that invoice has been voided
 		user, err := a.GetUser(r.Context(), claims.FirebaseID)
 		if err != nil {
-			log.Println(err)
+			log.Error().Err(err).Msg("Could not get user to send sms message for void")
 		}
 		var phoneNumber string
 		if phoneNumber == "" {
@@ -1164,12 +1075,12 @@ func VoidQBInvoice(qbc *qb.Client, a *auth.Client, twc *twilio.RestClient) http.
 			log.Printf("%s", err)
 		} else {
 			if phoneNumber == "" {
-				phoneNumber, err = qbToE164Phone(customer.PrimaryPhone.FreeFormNumber)
+				phoneNumber = qbToE164Phone(customer.PrimaryPhone.FreeFormNumber)
 				if customer.PrimaryPhone.FreeFormNumber == "" {
-					phoneNumber, err = qbToE164Phone(customer.Mobile.FreeFormNumber)
+					phoneNumber = qbToE164Phone(customer.Mobile.FreeFormNumber)
 				}
 				if customer.Mobile.FreeFormNumber == "" {
-					phoneNumber, err = qbToE164Phone(customer.AlternatePhone.FreeFormNumber)
+					phoneNumber = qbToE164Phone(customer.AlternatePhone.FreeFormNumber)
 				}
 
 				if err != nil {
@@ -1188,9 +1099,9 @@ func VoidQBInvoice(qbc *qb.Client, a *auth.Client, twc *twilio.RestClient) http.
 			log.Printf("Could not send SMS message %s", err)
 		} else {
 			if twResp.Body != nil {
-				log.Println(*twResp.Body)
+				log.Error().Interface("twResp", twResp).Msg("twRespbody was nil")
 			} else {
-				log.Println(twResp.Body)
+				log.Print(twResp)
 			}
 		}
 	}
@@ -1235,8 +1146,7 @@ func DeleteQBInvoice(qbc *qb.Client, a *auth.Client, twc *twilio.RestClient) htt
 		}
 		err = qbc.VoidInvoice(claims.QBCompanyID, existingInvoice.Id, existingInvoice.SyncToken)
 		if err != nil {
-			log.Println(err)
-			http.Error(w, "Could not void invoice", http.StatusInternalServerError)
+			logHttpError(err, "Could not void invoice", http.StatusInternalServerError, &w)
 			return
 		}
 
@@ -1245,7 +1155,7 @@ func DeleteQBInvoice(qbc *qb.Client, a *auth.Client, twc *twilio.RestClient) htt
 		// send twilio message that invoice has been voided
 		user, err := a.GetUser(r.Context(), claims.FirebaseID)
 		if err != nil {
-			log.Println(err)
+			log.Error().Err(err).Msg("Could not get user to send sms message for void")
 		}
 		var phoneNumber string
 		if phoneNumber == "" {
@@ -1256,12 +1166,12 @@ func DeleteQBInvoice(qbc *qb.Client, a *auth.Client, twc *twilio.RestClient) htt
 			log.Printf("%s", err)
 		} else {
 			if phoneNumber == "" {
-				phoneNumber, err = qbToE164Phone(customer.PrimaryPhone.FreeFormNumber)
+				phoneNumber = qbToE164Phone(customer.PrimaryPhone.FreeFormNumber)
 				if customer.PrimaryPhone.FreeFormNumber == "" {
-					phoneNumber, err = qbToE164Phone(customer.Mobile.FreeFormNumber)
+					phoneNumber = qbToE164Phone(customer.Mobile.FreeFormNumber)
 				}
 				if customer.Mobile.FreeFormNumber == "" {
-					phoneNumber, err = qbToE164Phone(customer.AlternatePhone.FreeFormNumber)
+					phoneNumber = qbToE164Phone(customer.AlternatePhone.FreeFormNumber)
 				}
 
 				if err != nil {
@@ -1280,9 +1190,9 @@ func DeleteQBInvoice(qbc *qb.Client, a *auth.Client, twc *twilio.RestClient) htt
 			log.Printf("Could not send SMS message %s", err)
 		} else {
 			if twResp.Body != nil {
-				log.Println(*twResp.Body)
+				log.Error().Interface("twResp", twResp).Msg("twRespbody was nil")
 			} else {
-				log.Println(twResp.Body)
+				log.Print(twResp)
 			}
 		}
 	}
@@ -1342,8 +1252,7 @@ func CompleteQBInvoice(qbc *qb.Client, a *auth.Client, twc *twilio.RestClient) h
 		}
 		_, err = qbc.UpdateInvoice(claims.QBCompanyID, invoiceToUpdate)
 		if err != nil {
-			log.Println(err)
-			http.Error(w, "Could not update invoice", http.StatusInternalServerError)
+			logHttpError(err, "Could not update invoice", http.StatusInternalServerError, &w)
 			return
 		}
 
@@ -1360,7 +1269,7 @@ func CompleteQBInvoice(qbc *qb.Client, a *auth.Client, twc *twilio.RestClient) h
 		// Get firebase user phone number
 		user, err := a.GetUser(r.Context(), claims.FirebaseID)
 		if err != nil {
-			log.Println(err)
+			log.Error().Err(err).Msg("Could not get user")
 		}
 		// TODO: implement get mfa enrollment in fbc
 		// 1. get mfaInfo
@@ -1376,12 +1285,12 @@ func CompleteQBInvoice(qbc *qb.Client, a *auth.Client, twc *twilio.RestClient) h
 			log.Printf("%s", err)
 		} else {
 			if phoneNumber == "" {
-				phoneNumber, err = qbToE164Phone(customer.PrimaryPhone.FreeFormNumber)
+				phoneNumber = qbToE164Phone(customer.PrimaryPhone.FreeFormNumber)
 				if customer.PrimaryPhone.FreeFormNumber == "" {
-					phoneNumber, err = qbToE164Phone(customer.Mobile.FreeFormNumber)
+					phoneNumber = qbToE164Phone(customer.Mobile.FreeFormNumber)
 				}
 				if customer.Mobile.FreeFormNumber == "" {
-					phoneNumber, err = qbToE164Phone(customer.AlternatePhone.FreeFormNumber)
+					phoneNumber = qbToE164Phone(customer.AlternatePhone.FreeFormNumber)
 				}
 
 				if err != nil {
@@ -1407,9 +1316,9 @@ func CompleteQBInvoice(qbc *qb.Client, a *auth.Client, twc *twilio.RestClient) h
 			log.Printf("Could not send SMS message %s", err)
 		} else {
 			if twResp.Body != nil {
-				log.Println(*twResp.Body)
+				log.Error().Interface("twResp", twResp).Msg("twRespbody was nil")
 			} else {
-				log.Println(twResp.Body)
+				log.Print(twResp)
 			}
 		}
 
@@ -1417,7 +1326,7 @@ func CompleteQBInvoice(qbc *qb.Client, a *auth.Client, twc *twilio.RestClient) h
 		if customer.PrimaryEmailAddr != nil && customer.PrimaryEmailAddr.Address != "" {
 			err = qbc.SendInvoice(claims.QBCompanyID, invoiceId, customer.PrimaryEmailAddr.Address)
 			if err != nil {
-				log.Println("Email couldn't be sent")
+				log.Error().Err(err).Msg("Email couldn't be sent")
 			}
 		}
 	}
@@ -1480,8 +1389,7 @@ func DuplicateQBInvoice(qbc *qb.Client) http.HandlerFunc {
 		// Create Invoice and send
 		createdInvoice, err := qbc.CreateInvoice(claims.QBCompanyID, invoice)
 		if err != nil {
-			log.Println(err)
-			http.Error(w, "Could not create invoice", http.StatusInternalServerError)
+			logHttpError(err, "Could not create invoice", http.StatusInternalServerError, &w)
 			return
 		}
 
@@ -1526,8 +1434,7 @@ func ListQBInvoices(qbc *qb.Client) http.HandlerFunc {
 
 		invoices, err := qbc.QueryInvoices(claims.QBCompanyID, orderBy, pageSize, pageToken, statuses, customerRef, query)
 		if err != nil {
-			log.Println(err)
-			http.Error(w, "Could not get invoices", http.StatusInternalServerError)
+			logHttpError(err, "Could not get invoices", http.StatusInternalServerError, &w)
 			return
 		}
 
@@ -1554,13 +1461,12 @@ func GetQBCustomer(qbc *qb.Client, s *storage.SQLStorage) http.Handler {
 		// Get Customer ID from URL
 		customerId := r.PathValue("id")
 		if customerId == "" {
-			http.Error(w, "No id in url", http.StatusBadRequest)
+			logHttpError(err, "No ID in URL", http.StatusBadRequest, &w)
 			return
 		}
 		// If franchisee is calling, they can get only get information about themselves
 		if !claims.IsFranchiser && customerId != claims.QBCustomerID {
-			log.Println("Customer ID")
-			http.Error(w, "No Access", http.StatusServiceUnavailable)
+			logHttpError(err, "No Access", http.StatusServiceUnavailable, &w)
 			return
 		}
 		// Get customer from QB
@@ -1572,7 +1478,7 @@ func GetQBCustomer(qbc *qb.Client, s *storage.SQLStorage) http.Handler {
 		// Check if firebase account exists for QB user
 		isLinked, err := s.IsFirebaseUserCustomer(customerId)
 		if err != nil {
-			http.Error(w, "Could not check if firebase user linked to qb customer", http.StatusInternalServerError)
+			logHttpError(err, "Could not check if firebase user linked to qb customer", http.StatusInternalServerError, &w)
 			return
 		}
 		// Return customer and if linked
@@ -1591,25 +1497,25 @@ func GetQBInvoice(qbc *qb.Client) http.Handler {
 		// Get QB token and set jwt for QB Client
 		token, err := decryptJWE(claims.QBBearerToken)
 		if err != nil {
-			http.Error(w, "Could not decrypt QB token", http.StatusUnauthorized)
+			logHttpError(err, "Could not decrypt QB token", http.StatusUnauthorized, &w)
 			return
 		}
 		qbc.SetClient(qb.BearerToken{AccessToken: string(token)})
 		// Get query params
 		invoiceId := r.PathValue("id")
 		if invoiceId == "" {
-			http.Error(w, "No id in url", http.StatusBadRequest)
+			logHttpError(err, "No ID in URL", http.StatusBadRequest, &w)
 			return
 		}
 		// Get Invoice from QB
 		invoice, err := qbc.FindInvoiceById(claims.QBCompanyID, invoiceId)
 		if err != nil {
-			http.Error(w, "Could not get invoice", http.StatusInternalServerError)
+			logHttpError(err, "Could not get invoice", http.StatusInternalServerError, &w)
 			return
 		}
 		// If franchisee is calling, they can get only get information about themselves
 		if !claims.IsFranchiser && invoice.CustomerRef.Value != claims.QBCustomerID {
-			http.Error(w, "No Access", http.StatusServiceUnavailable)
+			logHttpError(err, "No Access", http.StatusServiceUnavailable, &w)
 			return
 		}
 		// Write invoice to response
@@ -1637,8 +1543,7 @@ func GetQBInvoicePDF(qbc *qb.Client) http.Handler {
 		// Get PDF
 		pdf, err := qbc.GetInvoicePDF(claims.QBCompanyID, invoiceId)
 		if err != nil {
-			log.Println(err)
-			http.Error(w, "Could not get PDF", http.StatusInternalServerError)
+			logHttpError(err, "Could not get PDF", http.StatusInternalServerError, &w)
 			return
 		}
 		w.Header().Set("Content-Type", "application/pdf")
@@ -1671,20 +1576,4 @@ func decryptJWE(jwe string) (string, error) {
 		return "", err
 	}
 	return string(decrypted), nil
-}
-
-func qbToE164Phone(phone string) (string, error) {
-	// Remove all non-digit characters
-	reg := regexp.MustCompile(`[^0-9]`)
-	cleaned := reg.ReplaceAllString(phone, "")
-
-	// Validate length (10 digits for US numbers)
-	if len(cleaned) == 10 {
-		return "+1" + cleaned, nil
-	}
-	if len(cleaned) == 11 && cleaned[0] == '1' {
-		return "+" + cleaned, nil
-	}
-
-	return "", fmt.Errorf("invalid phone number length: got %d digits, want 10", len(cleaned))
 }
