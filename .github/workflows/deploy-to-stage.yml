@@ -86,8 +86,8 @@ jobs:
         
     - name: Update Terraform file for staging
       run: |
-        # Update the image SHA in the staging Terraform file
-        sed -i 's|@sha256:[a-f0-9]\+|@'"${IMAGE_DIGEST#*@}"'|g' ${{ env.TERRAFORM_FILE_PATH_STAGE }}
+        # Update only the API image SHA in the prod Terraform file
+        sed -i '/container_image_api/s|@sha256:[a-f0-9]\+|'"${IMAGE_DIGEST#*@}"'|g' ${{ env.TERRAFORM_FILE_PATH_STAGE }}
         
     - name: Commit and push changes
       run: |
