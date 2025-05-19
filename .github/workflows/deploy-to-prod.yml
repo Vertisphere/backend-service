@@ -5,6 +5,8 @@ on:
     types: [closed]
     branches:
       - main
+  issue_comment:
+    types: [created]
 
 env:
   PROJECT_ID: ordrport-prod
@@ -16,8 +18,15 @@ env:
 
 jobs:
   # TODO: add concurrent check to ensure only one PR is open at a time
+  # Check if comment is on a PR and contains the deploy command
+  check-deploy-command:
+    if: (github.event.issue.pull_request && contains(github.event.comment.body, 'deploy to prod')) || github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Deployment command detected or PR merged"
+
   build-and-deploy-to-prod:
-    if: github.event.pull_request.merged == true
+    needs: [check-deploy-command]
     runs-on: ubuntu-latest
     permissions: write-all
     outputs:
