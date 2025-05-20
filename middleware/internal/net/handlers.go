@@ -752,13 +752,8 @@ func PublishQBInvoice(qbc *qb.Client, auth *auth.Client, twc *twilio.RestClient)
 		twResp, err := twc.Api.CreateMessage(params)
 		if err != nil {
 			log.Printf("Could not send SMS message %s", err)
-		} else {
-			if twResp.Body != nil {
-				log.Error().Interface("twResp", *twResp.Body).Msg("Could not send SMS message")
-			} else {
-				log.Print(twResp)
-			}
 		}
+		log.Debug().Interface("twResp", twResp).Caller().Msg("Debug to take a look a twilio response")
 	}
 }
 
@@ -870,13 +865,8 @@ func UnpublishQBInvoice(qbc *qb.Client, auth *auth.Client, twc *twilio.RestClien
 		twResp, err := twc.Api.CreateMessage(params)
 		if err != nil {
 			log.Printf("Could not send SMS message %s", err)
-		} else {
-			if twResp.Body != nil {
-				log.Error().Interface("twResp", twResp).Msg("twRespbody was nil")
-			} else {
-				log.Print(twResp)
-			}
 		}
+		log.Debug().Interface("twResp", twResp).Caller().Msg("Debug to take a look a twilio response")
 	}
 }
 
@@ -993,13 +983,8 @@ func ApproveQBInvoice(qbc *qb.Client, a *auth.Client, twc *twilio.RestClient) ht
 		twResp, err := twc.Api.CreateMessage(params)
 		if err != nil {
 			log.Printf("Could not send SMS message %s", err)
-		} else {
-			if twResp.Body != nil {
-				log.Error().Interface("twResp", twResp).Msg("twRespbody was nil")
-			} else {
-				log.Print(twResp)
-			}
 		}
+		log.Debug().Interface("twResp", twResp).Caller().Msg("Debug to take a look a twilio response")
 	}
 }
 
@@ -1097,13 +1082,8 @@ func VoidQBInvoice(qbc *qb.Client, a *auth.Client, twc *twilio.RestClient) http.
 		twResp, err := twc.Api.CreateMessage(params)
 		if err != nil {
 			log.Printf("Could not send SMS message %s", err)
-		} else {
-			if twResp.Body != nil {
-				log.Error().Interface("twResp", twResp).Msg("twRespbody was nil")
-			} else {
-				log.Print(twResp)
-			}
 		}
+		log.Debug().Interface("twResp", twResp).Caller().Msg("Debug to take a look a twilio response")
 	}
 }
 
@@ -1188,13 +1168,8 @@ func DeleteQBInvoice(qbc *qb.Client, a *auth.Client, twc *twilio.RestClient) htt
 		twResp, err := twc.Api.CreateMessage(params)
 		if err != nil {
 			log.Printf("Could not send SMS message %s", err)
-		} else {
-			if twResp.Body != nil {
-				log.Error().Interface("twResp", twResp).Msg("twRespbody was nil")
-			} else {
-				log.Print(twResp)
-			}
 		}
+		log.Debug().Interface("twResp", twResp).Caller().Msg("Debug to take a look a twilio response")
 	}
 }
 
@@ -1375,13 +1350,15 @@ func CompleteQBInvoice(qbc *qb.Client, a *auth.Client, twc *twilio.RestClient, s
 		twResp, err := twc.Api.CreateMessage(params)
 		if err != nil {
 			log.Printf("Could not send SMS message %s", err)
-		} else {
-			if twResp.Body != nil {
-				log.Error().Interface("twResp", twResp).Msg("twRespbody was nil")
-			} else {
-				log.Print(twResp)
-			}
 		}
+		log.Debug().Interface("twResp", twResp).Caller().Msg("Debug to take a look a twilio response")
+		// else {
+		// 	if twResp.Body == nil {
+		// 		log.Error().Interface("twResp", twResp).Msg("twRespbody was nil")
+		// 	} else {
+		// 		log.Print(twResp)
+		// 	}
+		// }
 
 		// fuinally send email as well
 		// if customer.PrimaryEmailAddr != nil && customer.PrimaryEmailAddr.Address != "" {
