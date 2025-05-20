@@ -57,16 +57,22 @@ func encryptToken(token string) (string, error) {
 }
 
 // Send email via sendgrid
-func sendEmail(fromName string, toName string, email string, subject string, content *mail.Content, attachments []*mail.Attachment) {
+func sendEmail(fromName string, toName string, emails map[string]struct{}, subject string, content *mail.Content, attachments []*mail.Attachment) {
 	// Initialize mail
 	m := mail.NewV3Mail()
 
 	from := mail.NewEmail(fromName, "verification@ordrport.com")
-	to := mail.NewEmail(toName, email)
 
 	personalization := mail.NewPersonalization()
-	personalization.AddTos(to)
+	// For each key in the map (we use it like a map), we add to recipient list
 	personalization.Subject = subject
+	for email := range emails {
+		if email == "" {
+			continue
+		}
+		to := mail.NewEmail(toName, email)
+		personalization.AddTos(to)
+	}
 
 	m.SetFrom(from)
 	m.AddContent(content)

@@ -1264,37 +1264,37 @@ func CompleteQBInvoice(qbc *qb.Client, a *auth.Client, twc *twilio.RestClient, s
 		log.Debug().Msg("Customer Name: " + existingInvoice.CustomerRef.Name)
 
 		// Send email with invoice
-		// companyName := "OrdrPort Franchisor #" + claims.QBCompanyID
-		// customerName := "Customer " + existingInvoice.CustomerRef.Name
-		companyName := existingInvoice.BillAddr.Line2
-		customerName := existingInvoice.BillAddr.Line1
-		customerEmail := existingInvoice.BillEmail.Address
+		companyName := "OrdrPort Franchisor #" + claims.QBCompanyID
+		customerName := existingInvoice.CustomerRef.Name
+		// customerEmails is a list of emails to send to (Emails from qb and firebase)
+		// We're using map to avoid duplicates and struct since it takes no memory
+		customerEmails := map[string]struct{}{}
+		customerEmails[existingInvoice.BillEmail.Address] = struct{}{}
+		customerEmails[existingInvoice.BillEmailCC.Address] = struct{}{}
+		customerEmails[existingInvoice.BillEmailBCC.Address] = struct{}{}
 
-		// Get Customer information from QB
-		// qbCustomer, qbErr := qbc.GetCustomerById(claims.QBCompanyID, existingInvoice.CustomerRef.Value)
-		// if qbErr != nil {
-		// 	log.Error().Err(qbErr).Msg("Could not get customer information from QB to send email")
-		// } else {
-		// companyName = existingInvoice.BillAddr.Line2
-		// customerName = qbCustomer.DisplayName
-		// }
+		// Get company information from QB to set Company
+		qbCompany, qbErr := qbc.FindCompanyInfo(claims.QBCompanyID)
+		if qbErr != nil {
+			log.Debug().Interface("qbCompany", qbCompany).Caller().Msg("Company information from QB")
+			log.Error().Err(qbErr).Msg("Could not get company information from QB to set Company")
+		} else {
+			companyName = qbCompany.CompanyName
+		}
 
 		// Get customer information from DB
-		// dbCustomer, dbErr := s.GetCustomerByQBID(existingInvoice.CustomerRef.Value, claims.QBCompanyID)
-		// if dbErr != nil {
-		// 	log.Error().Err(dbErr).Msg("Could not get customer information from DB to send email")
-		// } else {
-		// 	fbCustomer, fbErr := a.GetUser(r.Context(), dbCustomer.FirebaseID)
-		// 	if fbErr != nil {
-		// 		log.Error().Err(fbErr).Msg("Could not get customer information from Firebase to send email")
-		// 	} else {
-		// 		customerEmail = fbCustomer.Email
-		// 		// If we can't get the customer from QB, we use the customer from DB
-		// 		if qbErr != nil {
-		// 			customerName = fbCustomer.DisplayName
-		// 		}
-		// 	}
-		// }
+		dbCustomer, dbErr := s.GetCustomerByQBID(existingInvoice.CustomerRef.Value, claims.QBCompanyID)
+		if dbErr != nil {
+			log.Error().Err(dbErr).Msg("Could not get customer information from DB to send email")
+		} else {
+			fbCustomer, fbErr := a.GetUser(r.Context(), dbCustomer.FirebaseID)
+			if fbErr != nil {
+				log.Error().Err(fbErr).Msg("Could not get customer information from Firebase to send email")
+			} else {
+				// Add firebase email to list of emails to send to
+				customerEmails[fbCustomer.Email] = struct{}{}
+			}
+		}
 
 		// Subject and content
 		subject := fmt.Sprintf("Your Order %s is Ready for Pickup!", invoiceId)
@@ -1317,7 +1317,7 @@ func CompleteQBInvoice(qbc *qb.Client, a *auth.Client, twc *twilio.RestClient, s
 		// Create attachments
 		attachments := []*mail.Attachment{a_pdf}
 
-		sendEmail(companyName, customerName, customerEmail, subject, content, attachments)
+		sendEmail(companyName, customerName, customerEmails, subject, content, attachments)
 
 		// Messaging isn't as important so we send message after we send response
 		// TODO: add twilio sms messaging
