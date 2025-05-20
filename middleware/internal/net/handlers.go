@@ -1259,37 +1259,42 @@ func CompleteQBInvoice(qbc *qb.Client, a *auth.Client, twc *twilio.RestClient, s
 		resp := response{Success: true}
 		encode(w, r, http.StatusOK, resp)
 
-		// Send email with invoice
-		companyName := "OrdrPort Franchisor"
-		customerName := "Customer " + existingInvoice.CustomerRef.Name
+		// Basic debug observability
+		log.Debug().Interface("invoice", existingInvoice).Msg("Invoice completed")
 		log.Debug().Msg("Customer Name: " + existingInvoice.CustomerRef.Name)
+
+		// Send email with invoice
+		// companyName := "OrdrPort Franchisor #" + claims.QBCompanyID
+		// customerName := "Customer " + existingInvoice.CustomerRef.Name
+		companyName := existingInvoice.BillAddr.Line2
+		customerName := existingInvoice.BillAddr.Line1
 		customerEmail := existingInvoice.BillEmail.Address
 
 		// Get Customer information from QB
-		qbCustomer, qbErr := qbc.GetCustomerById(claims.QBCompanyID, existingInvoice.CustomerRef.Value)
-		if qbErr != nil {
-			log.Error().Err(qbErr).Msg("Could not get customer information from QB to send email")
-		} else {
-			companyName = qbCustomer.CompanyName
-			customerName = qbCustomer.DisplayName
-		}
+		// qbCustomer, qbErr := qbc.GetCustomerById(claims.QBCompanyID, existingInvoice.CustomerRef.Value)
+		// if qbErr != nil {
+		// 	log.Error().Err(qbErr).Msg("Could not get customer information from QB to send email")
+		// } else {
+		// companyName = existingInvoice.BillAddr.Line2
+		// customerName = qbCustomer.DisplayName
+		// }
 
 		// Get customer information from DB
-		dbCustomer, dbErr := s.GetCustomerByQBID(existingInvoice.CustomerRef.Value, claims.QBCompanyID)
-		if dbErr != nil {
-			log.Error().Err(dbErr).Msg("Could not get customer information from DB to send email")
-		} else {
-			fbCustomer, fbErr := a.GetUser(r.Context(), dbCustomer.FirebaseID)
-			if fbErr != nil {
-				log.Error().Err(fbErr).Msg("Could not get customer information from Firebase to send email")
-			} else {
-				customerEmail = fbCustomer.Email
-				// If we can't get the customer from QB, we use the customer from DB
-				if qbErr != nil {
-					customerName = fbCustomer.DisplayName
-				}
-			}
-		}
+		// dbCustomer, dbErr := s.GetCustomerByQBID(existingInvoice.CustomerRef.Value, claims.QBCompanyID)
+		// if dbErr != nil {
+		// 	log.Error().Err(dbErr).Msg("Could not get customer information from DB to send email")
+		// } else {
+		// 	fbCustomer, fbErr := a.GetUser(r.Context(), dbCustomer.FirebaseID)
+		// 	if fbErr != nil {
+		// 		log.Error().Err(fbErr).Msg("Could not get customer information from Firebase to send email")
+		// 	} else {
+		// 		customerEmail = fbCustomer.Email
+		// 		// If we can't get the customer from QB, we use the customer from DB
+		// 		if qbErr != nil {
+		// 			customerName = fbCustomer.DisplayName
+		// 		}
+		// 	}
+		// }
 
 		// Subject and content
 		subject := fmt.Sprintf("Your Order %s is Ready for Pickup!", invoiceId)
