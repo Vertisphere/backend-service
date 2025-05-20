@@ -58,7 +58,7 @@ func addRoutes(
 	// WE'RE NOT USING REJECTED FOR NOW. WILL USE DRAFT INSTEAD
 	// mux.Handle("GET /qbInvoice:reject/{id}", RejectQBInvoice(qbc))
 	// Set QBInvoice to complete (ready for pick up)
-	mux.Handle("GET /qbInvoice:complete/{id}", CompleteQBInvoice(qbc, auth, twc))
+	mux.Handle("GET /qbInvoice:complete/{id}", CompleteQBInvoice(qbc, auth, twc, storage))
 
 	mux.Handle("GET /qbInvoice/{id}", GetQBInvoice(qbc))
 

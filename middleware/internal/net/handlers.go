@@ -752,13 +752,8 @@ func PublishQBInvoice(qbc *qb.Client, auth *auth.Client, twc *twilio.RestClient)
 		twResp, err := twc.Api.CreateMessage(params)
 		if err != nil {
 			log.Printf("Could not send SMS message %s", err)
-		} else {
-			if twResp.Body != nil {
-				log.Error().Interface("twResp", *twResp.Body).Msg("Could not send SMS message")
-			} else {
-				log.Print(twResp)
-			}
 		}
+		log.Debug().Interface("twResp", twResp).Caller().Msg("Debug to take a look a twilio response")
 	}
 }
 
@@ -870,13 +865,8 @@ func UnpublishQBInvoice(qbc *qb.Client, auth *auth.Client, twc *twilio.RestClien
 		twResp, err := twc.Api.CreateMessage(params)
 		if err != nil {
 			log.Printf("Could not send SMS message %s", err)
-		} else {
-			if twResp.Body != nil {
-				log.Error().Interface("twResp", twResp).Msg("twRespbody was nil")
-			} else {
-				log.Print(twResp)
-			}
 		}
+		log.Debug().Interface("twResp", twResp).Caller().Msg("Debug to take a look a twilio response")
 	}
 }
 
@@ -993,13 +983,8 @@ func ApproveQBInvoice(qbc *qb.Client, a *auth.Client, twc *twilio.RestClient) ht
 		twResp, err := twc.Api.CreateMessage(params)
 		if err != nil {
 			log.Printf("Could not send SMS message %s", err)
-		} else {
-			if twResp.Body != nil {
-				log.Error().Interface("twResp", twResp).Msg("twRespbody was nil")
-			} else {
-				log.Print(twResp)
-			}
 		}
+		log.Debug().Interface("twResp", twResp).Caller().Msg("Debug to take a look a twilio response")
 	}
 }
 
@@ -1097,13 +1082,8 @@ func VoidQBInvoice(qbc *qb.Client, a *auth.Client, twc *twilio.RestClient) http.
 		twResp, err := twc.Api.CreateMessage(params)
 		if err != nil {
 			log.Printf("Could not send SMS message %s", err)
-		} else {
-			if twResp.Body != nil {
-				log.Error().Interface("twResp", twResp).Msg("twRespbody was nil")
-			} else {
-				log.Print(twResp)
-			}
 		}
+		log.Debug().Interface("twResp", twResp).Caller().Msg("Debug to take a look a twilio response")
 	}
 }
 
@@ -1188,17 +1168,12 @@ func DeleteQBInvoice(qbc *qb.Client, a *auth.Client, twc *twilio.RestClient) htt
 		twResp, err := twc.Api.CreateMessage(params)
 		if err != nil {
 			log.Printf("Could not send SMS message %s", err)
-		} else {
-			if twResp.Body != nil {
-				log.Error().Interface("twResp", twResp).Msg("twRespbody was nil")
-			} else {
-				log.Print(twResp)
-			}
 		}
+		log.Debug().Interface("twResp", twResp).Caller().Msg("Debug to take a look a twilio response")
 	}
 }
 
-func CompleteQBInvoice(qbc *qb.Client, a *auth.Client, twc *twilio.RestClient) http.HandlerFunc {
+func CompleteQBInvoice(qbc *qb.Client, a *auth.Client, twc *twilio.RestClient, s *storage.SQLStorage) http.HandlerFunc {
 	type response struct {
 		Success bool `json:"success"`
 	}
@@ -1258,6 +1233,67 @@ func CompleteQBInvoice(qbc *qb.Client, a *auth.Client, twc *twilio.RestClient) h
 
 		resp := response{Success: true}
 		encode(w, r, http.StatusOK, resp)
+
+		// Basic debug observability
+		log.Debug().Interface("invoice", existingInvoice).Msg("Invoice completed")
+		log.Debug().Msg("Customer Name: " + existingInvoice.CustomerRef.Name)
+
+		// Send email with invoice
+		companyName := "OrdrPort Franchisor #" + claims.QBCompanyID
+		customerName := existingInvoice.CustomerRef.Name
+		// customerEmails is a list of emails to send to (Emails from qb and firebase)
+		// We're using map to avoid duplicates and struct since it takes no memory
+		customerEmails := map[string]struct{}{}
+		customerEmails[existingInvoice.BillEmail.Address] = struct{}{}
+		customerEmails[existingInvoice.BillEmailCC.Address] = struct{}{}
+		customerEmails[existingInvoice.BillEmailBCC.Address] = struct{}{}
+
+		// Get company information from QB to set Company
+		qbCompany, qbErr := qbc.FindCompanyInfo(claims.QBCompanyID)
+		if qbErr != nil {
+			log.Debug().Interface("qbCompany", qbCompany).Caller().Msg("Company information from QB")
+			log.Error().Err(qbErr).Msg("Could not get company information from QB to set Company")
+		} else {
+			companyName = qbCompany.CompanyName
+		}
+
+		// Get customer information from DB
+		dbCustomer, dbErr := s.GetCustomerByQBID(existingInvoice.CustomerRef.Value, claims.QBCompanyID)
+		if dbErr != nil {
+			log.Error().Err(dbErr).Msg("Could not get customer information from DB to send email")
+		} else {
+			fbCustomer, fbErr := a.GetUser(r.Context(), dbCustomer.FirebaseID)
+			if fbErr != nil {
+				log.Error().Err(fbErr).Msg("Could not get customer information from Firebase to send email")
+			} else {
+				// Add firebase email to list of emails to send to
+				customerEmails[fbCustomer.Email] = struct{}{}
+			}
+		}
+
+		// Subject and content
+		subject := fmt.Sprintf("Your Order %s is Ready for Pickup!", invoiceId)
+		htmlContent := fmt.Sprintf("<html><body><h1>Hello %s,</h1><p>Your order %s is ready for pickup!</p><p>To see the invoice, please visit: <a href=\"https://ordrport.com/franchisee/invoices/%s\">Invoice</a></p><p>Thank you for using OrdrPort!</p><p>Best regards,<br>%s</p></body></html>", customerName, invoiceId, invoiceId, companyName)
+		content := mail.NewContent("text/html", htmlContent)
+
+		// Get Invoice PDF
+		a_pdf := mail.NewAttachment()
+		pdf, err := qbc.GetInvoicePDF(claims.QBCompanyID, invoiceId)
+		if err != nil {
+			logHttpError(err, "Could not get PDF", http.StatusInternalServerError, &w)
+			return
+		}
+		encoded := base64.StdEncoding.EncodeToString(pdf)
+		a_pdf.SetContent(encoded)
+		a_pdf.SetType("application/pdf")
+		a_pdf.SetFilename(fmt.Sprintf("Invoice_%s.pdf", invoiceId))
+		a_pdf.SetDisposition("attachment")
+
+		// Create attachments
+		attachments := []*mail.Attachment{a_pdf}
+
+		sendEmail(companyName, customerName, customerEmails, subject, content, attachments)
+
 		// Messaging isn't as important so we send message after we send response
 		// TODO: add twilio sms messaging
 		// add twilio message
@@ -1314,21 +1350,23 @@ func CompleteQBInvoice(qbc *qb.Client, a *auth.Client, twc *twilio.RestClient) h
 		twResp, err := twc.Api.CreateMessage(params)
 		if err != nil {
 			log.Printf("Could not send SMS message %s", err)
-		} else {
-			if twResp.Body != nil {
-				log.Error().Interface("twResp", twResp).Msg("twRespbody was nil")
-			} else {
-				log.Print(twResp)
-			}
 		}
+		log.Debug().Interface("twResp", twResp).Caller().Msg("Debug to take a look a twilio response")
+		// else {
+		// 	if twResp.Body == nil {
+		// 		log.Error().Interface("twResp", twResp).Msg("twRespbody was nil")
+		// 	} else {
+		// 		log.Print(twResp)
+		// 	}
+		// }
 
 		// fuinally send email as well
-		if customer.PrimaryEmailAddr != nil && customer.PrimaryEmailAddr.Address != "" {
-			err = qbc.SendInvoice(claims.QBCompanyID, invoiceId, customer.PrimaryEmailAddr.Address)
-			if err != nil {
-				log.Error().Err(err).Msg("Email couldn't be sent")
-			}
-		}
+		// if customer.PrimaryEmailAddr != nil && customer.PrimaryEmailAddr.Address != "" {
+		// 	err = qbc.SendInvoice(claims.QBCompanyID, invoiceId, customer.PrimaryEmailAddr.Address)
+		// 	if err != nil {
+		// 		log.Error().Err(err).Msg("Email couldn't be sent")
+		// 	}
+		// }
 	}
 }
 
