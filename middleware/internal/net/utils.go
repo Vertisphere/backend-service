@@ -64,12 +64,14 @@ func sendEmail(fromName string, toName string, email string, subject string, con
 	from := mail.NewEmail(fromName, "verification@ordrport.com")
 	to := mail.NewEmail(toName, email)
 
-	m.SetFrom(from)
-	m.AddContent(content)
-
 	personalization := mail.NewPersonalization()
 	personalization.AddTos(to)
 	personalization.Subject = subject
+
+	m.SetFrom(from)
+	m.AddContent(content)
+	m.AddPersonalizations(personalization)
+	// TODO: add template id
 
 	for _, attachment := range attachments {
 		m.AddAttachment(attachment)
