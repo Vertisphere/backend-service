@@ -291,10 +291,10 @@ func (s SQLStorage) GetCustomerByFirebaseID(firebaseID string) (domain.DBCustome
 	return customer, nil
 }
 
-func (s SQLStorage) GetCustomerByQBID(qbID string) (domain.DBCustomer, error) {
+func (s SQLStorage) GetCustomerByQBID(qbID string, companyID string) (domain.DBCustomer, error) {
 	var customer domain.DBCustomer
-	domainQuery := "SELECT * FROM customer WHERE qb_customer_id = $1"
-	err := s.db.QueryRow(domainQuery, qbID).Scan(
+	domainQuery := "SELECT * FROM customer WHERE qb_customer_id = $1 AND qb_company_id = $2"
+	err := s.db.QueryRow(domainQuery, qbID, companyID).Scan(
 		&customer.QBCustomerID,
 		&customer.QBCompanyID,
 		&customer.FirebaseID,
