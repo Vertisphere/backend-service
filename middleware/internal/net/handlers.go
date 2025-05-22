@@ -590,8 +590,8 @@ func UpdateQBInvoice(qbc *qb.Client) http.HandlerFunc {
 			http.Error(w, "Could not verify that invoice exists or is in draft status", http.StatusInternalServerError)
 			return
 		}
-		// Verify that the invoice status is currently in DRAFT
-		if qb.CheckInvoiceStatus(existingInvoice) != qb.INVOICE_DRAFT {
+		// Verify that the invoice status is currently in DRAFT OR PENDING
+		if qb.CheckInvoiceStatus(existingInvoice) != qb.INVOICE_DRAFT && qb.CheckInvoiceStatus(existingInvoice) != qb.INVOICE_PENDING {
 			http.Error(w, "Invoice is not in draft status", http.StatusBadRequest)
 			return
 		}
